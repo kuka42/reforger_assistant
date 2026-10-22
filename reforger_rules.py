@@ -10,6 +10,7 @@ READ_ONLY_TOOLS = (
     "asset_search", "game_browse", "game_read", "api_search",
     "component_search", "wiki_search", "wiki_read", "wb_knowledge",
 )
+# project i prefab NIE są udostępniane: asystent nie czyta plików projektów użytkownika (decyzja użytkownika).
 
 
 KEEP_PREFAB_BLOCKS = ("ActionsManagerComponent",)
@@ -97,3 +98,44 @@ _NON_CODE_LANGS = {"xml", "json", "bat", "cmd", "powershell", "ps1", "text", "tx
 
 
 _API_CODE_BLOCK_RE = re.compile(r"```[ \t]*([\w+\-]*)[ \t]*\n(.*?)```", re.S)
+
+
+
+# ---------------------------------------------------------------- narzędzia z akcjami (od 1.7.1)
+# Zabezpieczenie na wypadek, gdyby narzędzie z akcjami trafiło kiedyś do READ_ONLY_TOOLS: tylko akcje odczytu,
+# bez argumentów zapisu i projectPath. Dziś project i prefab nie są udostępniane, więc te wpisy są nieaktywne.
+TOOL_ACTION_LIMITS = {"project": ("browse", "read"), "prefab": ("inspect",)}
+TOOL_DROP_ARGS = {
+    "project": ("projectPath", "content", "createDirectories"),
+    "prefab": ("projectPath", "name", "prefabType", "variant", "parentPrefab", "components",
+               "description", "includeAncestry"),
+}
+WB_KNOWLEDGE_MAX_FILES = 2       # BK pozwala na 4 pliki po 30 tys. znaków; więcej i tak nie zmieści się w kontekście
+
+# ---------------------------------------------------------------- błędy kompilatora z numerem linii (od 1.7.1)
+# Konsola Workbencha:  @"Scripts/Game/RA_Fuel.c,21": Broken expression ...  albo  Scripts/Game/RA_Fuel.c(21): ...
+_COMPILE_LINE_RES = (
+    re.compile(r'@"([^"\n]+?\.c),\s*(\d+)"\s*:\s*([^\n]+)'),
+    re.compile(r'([\w./\\:-]+?\.c)\((\d+)\)\s*:\s*([^\n]+)'),
+)
+KB_PITFALLS_QUERY = "enforce language pitfall"     # trafia w enforceScript-language.md bazy BK (punktacja 9 do 1)
+KB_SECTION_RE = re.compile(r"ternary|pitfall|primitive|switch|operator", re.I)
+
+# ---------------------------------------------------------------- składnia, której Enforce Script nie przyjmuje (od 1.7.1)
+# Każda reguła ma źródło: baza wiedzy BK (enforceScript-language.md) albo potwierdzenie przez kompilator.
+SYNTAX_RULES = (
+    (re.compile(r"(?<![\w.])\d+(?:\.\d*)?[fF]\b|(?<![\w.])\.\d+[fF]\b"),
+     "sufiks f przy liczbie (np. 0.5f) - Enforce Script go nie przyjmuje (kompilator: Broken expression); pisz 0.5"),
+    (re.compile(r"\?"),
+     "operator ?: lub ?. nie istnieje w Enforce Script - użyj if/else (baza wiedzy BK: enforceScript-language.md)"),
+    (re.compile(r'(?<![\w."])\d+(?:\.\d+)?\s*\+\s*""'),
+     'liczba + tekst (3 + "tekst") to błąd parsowania - tekst musi być po lewej ("tekst" + 3)'),
+)
+
+
+# ---------------------------------------------------------------- wiedza przed kodem (od 1.8.0)
+KB_CHECK_MAX_FILES = 2
+KB_CHECK_CAP = 5000                       # znaków wzorców w podpowiedzi
+KB_CHECK_DROP_WORDS = ("scr", "class")    # słowa z nazw klas pomijane w zapytaniu do bazy
+# Sekcje plików bazy pokazywane najpierw: reguły, pułapki, struktura podstawowa, dobre praktyki.
+KB_CHECK_PRIORITY_RE = re.compile(r"rule|pitfall|basic|structure|best|key|modd", re.I)

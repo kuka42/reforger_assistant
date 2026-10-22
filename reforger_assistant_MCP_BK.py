@@ -34,6 +34,7 @@ except ImportError as _exc:  # jasny komunikat zamiast tracebacku
 # co było dostępne jako reforger_assistant_MCP_BK.X (serwer WEB, testy), działa bez zmian.
 try:
     from reforger_config import (  # noqa: F401
+        KB_CHECK_MODE,
         VERSION,
         MCP_SCRIPT,
         GAME_PATH,
@@ -65,6 +66,16 @@ try:
         config_summary,
     )
     from reforger_prompts import (  # noqa: F401
+        HINT_KB_CHECK,
+        HINT_COMPILE_LINES,
+        COMPILE_LINE_FOUND,
+        COMPILE_LINE_FINDINGS,
+        COMPILE_LINE_MISSING,
+        COMPILE_KB,
+        COMPILE_PROJECT,
+        HINT_SYNTAX_FIX,
+        FOOTER_SYNTAX,
+        TOOL_ACTION_BLOCKED,
         SYSTEM_PROMPT,
         EMERGENCY_PLACEHOLDER,
         WIKI_TITLE_HINT,
@@ -93,6 +104,11 @@ try:
         FOOTER_API,
     )
     from reforger_rules import (  # noqa: F401
+        KB_CHECK_MAX_FILES,
+        TOOL_ACTION_LIMITS,
+        TOOL_DROP_ARGS,
+        WB_KNOWLEDGE_MAX_FILES,
+        KB_PITFALLS_QUERY,
         READ_ONLY_TOOLS,
         KEEP_PREFAB_BLOCKS,
         VIEW_QUERY_KEYS,
@@ -121,6 +137,14 @@ try:
         _API_CODE_BLOCK_RE,
     )
     from reforger_checks import (  # noqa: F401
+        _own_code_blocks,
+        _kb_query_from_code,
+        _kb_excerpt,
+        _compile_line_errors,
+        _syntax_problems,
+        _syntax_findings,
+        _code_line_excerpt,
+        _kb_sections,
         _SESSION_FILES,
         _SESSION_FILES_MAX,
         _SESSION_FILE_CAP,
@@ -445,12 +469,13 @@ def _emergency_history_entry(content: str) -> dict:
     return {"role": "assistant", "content": EMERGENCY_PLACEHOLDER}
 
 
-def _compile_error_lookup(question: str, meta: dict, mcp) -> dict | None:
+def _compile_error_lookup(question: str, meta: dict, mcp, messages: list | None = None) -> dict | None:
     """Błąd kompilatora w pytaniu: zapamiętaj odrzucone nazwy i sprawdź je od razu w api_search.
     Zwraca jednorazową podpowiedź dla modelu albo None."""
     found = [s for s in dict.fromkeys(_COMPILE_ERR_RE.findall(question or "")) if s not in meta["banned"]]
+    line_hint = _compile_line_hint(question, meta, mcp, messages)
     if not found:
-        return None
+        return {"role": "user", "content": line_hint} if line_hint else None
     parts = []
     for sym in found[:3]:
         meta["banned"].add(sym)
@@ -467,7 +492,43 @@ def _compile_error_lookup(question: str, meta: dict, mcp) -> dict | None:
         except (MCPError, OSError, ValueError, TypeError) as exc:
             print(f"  [API] automatyczne sprawdzenie {sym} nieudane: {exc!r}", flush=True)
     lookup = HINT_COMPILE_ERROR_LOOKUP.format(results="\n\n".join(parts)) if parts else ""
-    return {"role": "user", "content": HINT_COMPILE_ERROR.format(symbols=", ".join(found), lookup=lookup)}
+    content = HINT_COMPILE_ERROR.format(symbols=", ".join(found), lookup=lookup)
+    return {"role": "user", "content": content + ("\n\n" + line_hint if line_hint else "")}
+
+
+def _compile_line_hint(question: str, meta: dict, mcp, messages: list | None) -> str:
+    """Błędy kompilatora z plikiem i numerem linii: wskazana linia z ostatniego kodu asystenta,
+    wykryta w niej niedozwolona składnia i sekcje o pułapkach z bazy wiedzy BK."""
+    errors = _compile_line_errors(question)
+    if not errors:
+        return ""
+    blocks = []
+    for path, line, message in errors[:3]:
+        hit = _code_line_excerpt(messages or [], path, line)
+        print(f"  [KOD] błąd kompilatora: {path}({line}) - "
+              + ("linia znaleziona w ostatnim kodzie" if hit else "linii nie ma w ostatnim kodzie"), flush=True)
+        if hit:
+            excerpt, target = hit
+            found = _syntax_findings(target)
+            findings = COMPILE_LINE_FINDINGS.format(findings="; ".join(found)) if found else ""
+            blocks.append(COMPILE_LINE_FOUND.format(file=path, line=line, message=message, excerpt=excerpt, findings=findings))
+        else:
+            blocks.append(COMPILE_LINE_MISSING.format(file=path, line=line, message=message))
+    kb = ""
+    if "wb_knowledge" in getattr(mcp, "tools", {}):
+        args = {"query": KB_PITFALLS_QUERY, "max_files": 1}
+        try:
+            raw = _raw_text(mcp.call_tool("wb_knowledge", args))
+            _add_evidence(meta, raw)
+            meta["kb_this_turn"] = True
+            sections = _kb_sections(raw)
+            if sections:
+                kb = COMPILE_KB.format(sections=sections)
+            print(f"  [KOD] automatyczne wb_knowledge('{KB_PITFALLS_QUERY}'): {len(sections)} zn. sekcji o pułapkach", flush=True)
+        except (MCPError, OSError, ValueError, TypeError) as exc:
+            print(f"  [KOD] wb_knowledge nieudane: {exc!r}", flush=True)
+    project = COMPILE_PROJECT if "project" in getattr(mcp, "tools", {}) else ""
+    return HINT_COMPILE_LINES.format(errors="\n\n".join(blocks), kb=kb, project=project)
 
 
 def _suggest_paths(mcp, path: str) -> str:
@@ -494,7 +555,7 @@ def _is_source_result(text: str, tool_name: str = "") -> bool:
     first = _strip_note(text).split("\n", 1)[0]
     # Lokalny widok pliku (query / zakres linii) to też odczyt pliku, a nie wynik wyszukiwania.
     return ((first.startswith("//") and "(from .pak)" in first) or first.startswith("[Widok lokalny")
-            or tool_name in ("wiki_read", "wb_knowledge"))
+            or tool_name in ("wiki_read", "wb_knowledge", "project", "prefab"))
 
 
 def _compact_tool_context(messages: list[dict], limit: int | None = None) -> None:
@@ -784,12 +845,14 @@ def _ask_impl(question: str, messages: list[dict], mcp: MCPStdioClient,
     view_counts: dict[str, int] = {}
     misses: list[str] = []
     meta = _session_meta(messages)       # wyniki narzędzi w sesji i nazwy odrzucone przez kompilator
+    meta["kb_this_turn"] = False         # czy w tej turze ktoś (model albo silnik) sięgnął do wb_knowledge
+    kb_rounds = 0
     api_fix_rounds = 0
     api_footer = ""
     pending_hint = None                  # jednorazowa podpowiedź do następnego wywołania (nie trafia do historii)
     if API_CHECK_MODE != "off":
         try:
-            pending_hint = _compile_error_lookup(question, meta, mcp)
+            pending_hint = _compile_error_lookup(question, meta, mcp, messages)
         except Exception as exc:  # kontrola nigdy nie psuje tury
             print(f"  [API] sprawdzenie błędu kompilatora pominięte: {exc!r}", flush=True)
     empty_retries = 0
@@ -907,23 +970,58 @@ def _ask_impl(question: str, messages: list[dict], mcp: MCPStdioClient,
                     content = (content or "[Brak odpowiedzi]") + (
                         "\n\n[Uwaga: odpowiedź jest niepełna; ponowna próba się nie udała.]"
                     )
+            api_footer = ""
+            kb_hint = None
+            if (KB_CHECK_MODE == "on" and content and kb_rounds < 1 and not meta.get("kb_this_turn")
+                    and "wb_knowledge" in getattr(mcp, "tools", {}) and count < MAX_TOOL_CALLS):
+                try:
+                    own = _own_code_blocks(content, meta, session_files)
+                    if own:
+                        kb_query = _kb_query_from_code("\n".join(own))
+                        raw = _raw_text(mcp.call_tool("wb_knowledge", {"query": kb_query, "max_files": KB_CHECK_MAX_FILES}))
+                        _add_evidence(meta, raw)
+                        meta["kb_this_turn"] = True
+                        kb_rounds += 1
+                        excerpt, kb_files = _kb_excerpt(raw, kb_query)
+                        print(f"  [KB] własny kod bez konsultacji z bazą - wb_knowledge('{kb_query}'): "
+                              f"{', '.join(kb_files) or 'brak plików'}; {len(excerpt)} zn. wzorców", flush=True)
+                        if excerpt:
+                            kb_hint = HINT_KB_CHECK.format(query=kb_query, files=", ".join(kb_files) or "-", excerpt=excerpt)
+                except Exception as exc:  # kontrola nigdy nie psuje odpowiedzi
+                    print(f"  [KB] kontrola wzorców pominięta z powodu błędu: {exc!r}", flush=True)
             if API_CHECK_MODE != "off" and content:
                 try:
                     problems = _api_problems(content, meta, session_files)
                 except Exception as exc:  # kontrola nigdy nie psuje odpowiedzi
                     print(f"  [API] kontrola pominięta z powodu błędu: {exc!r}", flush=True)
                     problems = []
-                if problems:
-                    print("  [API] niepotwierdzone: " + "; ".join(problems), flush=True)
+                try:
+                    syntax = _syntax_problems(content)
+                except Exception as exc:  # j.w.
+                    print(f"  [KOD] kontrola składni pominięta z powodu błędu: {exc!r}", flush=True)
+                    syntax = []
+                if syntax:
+                    print("  [KOD] niedozwolona składnia: " + "; ".join(syntax), flush=True)
+                if problems or syntax:
+                    if problems:
+                        print("  [API] niepotwierdzone: " + "; ".join(problems), flush=True)
                     if API_CHECK_MODE == "fix" and api_fix_rounds < 1 and count < MAX_TOOL_CALLS:
                         api_fix_rounds += 1
                         phase("Sprawdzam nazwy API użyte w kodzie")
-                        pending_hint = {"role": "user", "content": HINT_API_FIX.format(problems="; ".join(problems))}
+                        parts = ([HINT_API_FIX.format(problems="; ".join(problems))] if problems else []) + (
+                            [HINT_SYNTAX_FIX.format(problems="; ".join(syntax))] if syntax else []) + (
+                            [kb_hint] if kb_hint else [])
+                        pending_hint = {"role": "user", "content": "\n\n".join(parts)}
                         continue          # szkic odrzucony: nie trafia do historii
                     if API_CHECK_MODE == "fix":
-                        api_footer = _api_footer(problems)
+                        api_footer = (_api_footer(problems) if problems else "") + (
+                            FOOTER_SYNTAX.format(problems="; ".join(syntax)) if syntax else "")
                 elif api_fix_rounds:
                     print("  [API] po rundzie poprawkowej wszystkie nazwy potwierdzone", flush=True)
+            if kb_hint:
+                phase("Porównuję kod z wzorcami z bazy wiedzy")
+                pending_hint = {"role": "user", "content": kb_hint}
+                continue              # szkic odrzucony: model porówna go ze wzorcami i odpowie od nowa
             messages.append({"role": "assistant", "content": content})
             compact_finished_history(messages)
             phase("Odpowiedź gotowa")
@@ -966,6 +1064,18 @@ def _ask_impl(question: str, messages: list[dict], mcp: MCPStdioClient,
                 # nieznane argumenty, typy i limity wg prawdziwego schematu z tools/list.
                 model_title = arguments.get("title") if isinstance(arguments, dict) else None
                 fixed_name, fixed_args, notes = repair_tool_call(name, arguments, mcp.tools)
+                if fixed_name in TOOL_DROP_ARGS:
+                    for dropped in TOOL_DROP_ARGS[fixed_name]:
+                        fixed_args.pop(dropped, None)
+                if fixed_name in TOOL_ACTION_LIMITS and fixed_args.get("action") not in TOOL_ACTION_LIMITS[fixed_name]:
+                    notes = [TOOL_ACTION_BLOCKED.format(action=fixed_args.get("action"), tool=fixed_name,
+                                                        allowed=", ".join(TOOL_ACTION_LIMITS[fixed_name]))]
+                    fixed_name = None         # bez wywołania MCP: tylko odczyt
+                if fixed_name == "wb_knowledge":
+                    wanted = fixed_args.get("max_files", 2)
+                    if not isinstance(wanted, (int, float)) or wanted > WB_KNOWLEDGE_MAX_FILES:
+                        notes.append(f"max_files {wanted} -> {WB_KNOWLEDGE_MAX_FILES}")
+                        fixed_args["max_files"] = WB_KNOWLEDGE_MAX_FILES
                 if fixed_name is None:
                     # Błąd modelu, nie wyszukiwanie: nie wołamy MCP i nie liczymy do limitu.
                     response = "BŁĄD: " + "; ".join(notes) + "\n" + tool_schema_hint(mcp.tools, name)
@@ -1047,6 +1157,8 @@ def _ask_impl(question: str, messages: list[dict], mcp: MCPStdioClient,
                                 print(f"  [REPAIR] wiki_read: znormalizowany tytuł nie istnieje; użyto {model_title!r}", flush=True)
                         if not is_error:
                             _add_evidence(meta, raw)
+                            if name == "wb_knowledge":
+                                meta["kb_this_turn"] = True
                         view_found = True
                         if name == "game_read" and not is_error:
                             full_cache[base_signature] = raw

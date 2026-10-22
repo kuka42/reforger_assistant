@@ -5,6 +5,8 @@ from __future__ import annotations
 import re
 
 from reforger_prompts import FOOTER_VERIFY, FOOTER_VERIFY_MORE, FOOTER_API
+from reforger_rules import _COMPILE_LINE_RES, KB_SECTION_RE, SYNTAX_RULES
+from reforger_rules import KB_CHECK_CAP, KB_CHECK_DROP_WORDS, KB_CHECK_PRIORITY_RE
 from reforger_rules import (
     READ_ONLY_TOOLS,
     KEEP_PREFAB_BLOCKS,
@@ -149,7 +151,11 @@ def _verify_answer(answer: str, files: dict[str, str]):
             continue                     # kod własny modelu / ścieżka przykładowa / bez przypisanego pliku
         key, text = _find_evidence(files, path)
         if text is None:
-            findings.append(f"plik '{path}' nie został odczytany w tej rozmowie - cytat niepotwierdzony")
+            # Kod własny (modded class albo nowa klasa z własnym tagiem, np. RA_Foo) to nie cytat z gry,
+            # tylko plik docelowy użytkownika - "nieodczytany" byłby fałszywym alarmem.
+            if not (re.search(r"\bmodded\s+class\b", block)
+                    or re.search(r"\bclass\s+(?!SCR_)[A-Z][A-Z0-9]{1,5}_\w+", block)):
+                findings.append(f"plik '{path}' nie został odczytany w tej rozmowie - cytat niepotwierdzony")
             continue
         checked += 1
         fnorm = norm_cache.setdefault(key, _norm_code(text))
@@ -348,3 +354,130 @@ def _api_problems(answer: str, meta: dict, files: dict[str, str]) -> list[str]:
 
 def _api_footer(problems: list[str]) -> str:
     return FOOTER_API.format(problems="; ".join(problems))
+
+
+
+# ---------------------------------------------------------------- od 1.7.1: błędy kompilatora z linią i kontrola składni
+def _compile_line_errors(text: str) -> list[tuple[str, int, str]]:
+    """(plik, linia, komunikat) z komunikatów kompilatora wklejonych przez użytkownika."""
+    found: dict[tuple, tuple] = {}
+    for pattern in _COMPILE_LINE_RES:
+        for m in pattern.finditer(text or ""):
+            path, line, msg = m.group(1).strip(), int(m.group(2)), m.group(3).strip()
+            key = (path.replace("\\", "/").rsplit("/", 1)[-1].lower(), line)
+            found.setdefault(key, (path, line, msg))
+    return list(found.values())
+
+
+def _enforce_blocks(answer: str) -> list[str]:
+    return [block for lang, block in _API_CODE_BLOCK_RE.findall(answer or "")
+            if lang.lower() not in _NON_CODE_LANGS and not _PREFAB_LIKE_RE.search(block)]
+
+
+def _syntax_findings(code: str) -> list[str]:
+    lines = _strip_code_noise(code).split("\n")
+    out = []
+    for pattern, message in SYNTAX_RULES:
+        hit = next((ln.strip() for ln in lines if pattern.search(ln)), None)
+        if hit is not None:
+            out.append(f"{message}: `{hit[:90]}`")
+    return out
+
+
+def _syntax_problems(answer: str) -> list[str]:
+    """Składnia, której Enforce Script nie przyjmuje, w blokach kodu odpowiedzi."""
+    problems: list[str] = []
+    for block in _enforce_blocks(answer):
+        problems.extend(_syntax_findings(block))
+    return list(dict.fromkeys(problems))[:6]
+
+
+def _code_line_excerpt(messages: list, file_name: str, line_no: int, radius: int = 2):
+    """Linia wskazana przez kompilator w ostatnim bloku kodu asystenta: (fragment z numeracją, linia) albo None.
+    Preferuje blok, w którego nagłówku pada nazwa pliku z komunikatu."""
+    base = file_name.replace("\\", "/").rsplit("/", 1)[-1].lower()
+    for message in reversed(messages or []):
+        if message.get("role") != "assistant":
+            continue
+        blocks = _enforce_blocks(str(message.get("content", "")))
+        if not blocks:
+            continue
+        chosen = next((b for b in blocks if base and base in b[:300].lower()), blocks[-1])
+        lines = chosen.split("\n")
+        if lines and not lines[-1].strip():
+            lines = lines[:-1]
+        if not 1 <= line_no <= len(lines):
+            return None
+        lo, hi = max(1, line_no - radius), min(len(lines), line_no + radius)
+        excerpt = "\n".join(f"{'>>' if i == line_no else '  '} {i:3d}| {lines[i - 1]}" for i in range(lo, hi + 1))
+        return excerpt, lines[line_no - 1]
+    return None
+
+
+def _kb_sections(text: str, cap: int = 4500) -> str:
+    """Z pliku bazy wiedzy tylko sekcje o pułapkach składni (nagłówki '## ...' pasujące do KB_SECTION_RE)."""
+    parts = re.split(r"(?m)^(?=##\s)", text or "")
+    keep = [part.strip() for part in parts if part.startswith("##") and KB_SECTION_RE.search(part.split("\n", 1)[0])]
+    return "\n\n".join(keep)[:cap]
+
+
+# ---------------------------------------------------------------- wiedza przed kodem (od 1.8.0)
+def _own_code_blocks(answer: str, meta: dict, files: dict[str, str]) -> list[str]:
+    """Bloki z WŁASNYM kodem modelu: modded class albo deklaracja klasy, której nie ma w wynikach narzędzi.
+    Cytaty z gry (klasy znane z odczytów) i krótkie fragmenty bez klasy nie liczą się."""
+    texts = _evidence_texts(meta, files)
+    own = []
+    for block in _enforce_blocks(answer):
+        code = _strip_code_noise(block)
+        if re.search(r"\bmodded\s+class\b", code):
+            own.append(block)
+            continue
+        names = re.findall(r"\bclass\s+(\w+)", code)
+        if names and not all(any(re.search(rf"\bclass\s+{re.escape(n)}\b", t) for t in texts) for n in names):
+            own.append(block)
+    return own
+
+
+def _kb_query_from_code(code: str, limit: int = 16) -> str:
+    """Zapytanie do wb_knowledge zbudowane z samego kodu: modded/override i słowa z nazw klas i metod
+    (CamelCase rozbite, prefiksy tagów usunięte, sąsiednie słowa także sklejone, np. game+mode -> gamemode)."""
+    code = _strip_code_noise(code)
+    words: list[str] = []
+    if re.search(r"\bmodded\s+class\b", code):
+        words += ["modded", "override"]
+    idents = [n for pair in re.findall(r"\b(?:modded\s+)?class\s+(\w+)(?:\s*:\s*(\w+))?", code) for n in pair if n]
+    idents += re.findall(r"\b([A-Z]\w+)\s*\.\s*[A-Z]\w*\s*\(", code) + re.findall(r"\boverride\s+\w+\s+(\w+)\s*\(", code)
+    for ident in idents:
+        ident = re.sub(r"^(SCR_|[A-Z]{2,5}_)", "", ident)
+        for part in re.findall(r"[A-Z]+(?![a-z])|[A-Z]?[a-z]+|\d+", ident):
+            p = part.lower()
+            if len(p) > 2 and p not in KB_CHECK_DROP_WORDS:
+                words.append(p)
+    joined = [a + b for a, b in zip(words, words[1:]) if a != b]
+    return " ".join(list(dict.fromkeys(words + joined))[:limit])
+
+
+def _kb_excerpt(text: str, query: str, cap: int = KB_CHECK_CAP) -> tuple[str, list[str]]:
+    """Z wyniku wb_knowledge: najpierw sekcje z regułami/pułapkami/strukturą, potem sekcje z nagłówkiem
+    zawierającym słowo z zapytania. Zwraca (fragment, tytuły plików)."""
+    sections = re.split(r"(?m)^(?=##\s)", text or "")
+    titles, picked = [], []
+    tokens = [t for t in query.split() if len(t) > 3]
+    for i, sec in enumerate(sections):
+        if not sec.startswith("##"):
+            continue
+        heading, _, body = sec.partition("\n")
+        if body.lstrip().startswith("# "):        # nagłówek pliku dopisany przez wb_knowledge
+            titles.append(heading[2:].strip())
+            continue
+        if KB_CHECK_PRIORITY_RE.search(heading):
+            picked.append((0, i, sec.strip()))
+        elif any(t in heading.lower() for t in tokens):
+            picked.append((1, i, sec.strip()))
+    out, used = [], 0
+    for _, _, sec in sorted(picked):
+        if used + len(sec) > cap:
+            continue
+        out.append(sec)
+        used += len(sec) + 2
+    return "\n\n".join(out), titles

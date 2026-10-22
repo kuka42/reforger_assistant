@@ -4,11 +4,11 @@ from __future__ import annotations
 import os
 
 
-VERSION = "1.7.0-modules"
+VERSION = "1.8.0-kb"
 
 # Ścieżki potwierdzone podczas poprzednich testów użytkownika — edytowalne.
 MCP_SCRIPT = os.environ.get(
-    "ENFUSION_MCP_SCRIPT", r"F:\reforger-scripts\enfusion-mcp-BK\dist\index.js"
+    "ENFUSION_MCP_SCRIPT", r"D:\enfusion-mcp-BK\dist\index.js"
 )
 GAME_PATH = os.environ.get(
     "ENFUSION_GAME_PATH", r"D:\SteamLibrary\steamapps\common\Arma Reforger"
@@ -63,6 +63,11 @@ if API_CHECK_MODE not in ("off", "log", "fix"):
     API_CHECK_MODE = "fix"
 # Odpowiedzi awaryjne (synteza bez pełnego badania) w kontekście modelu: placeholder (domyślnie) albo keep.
 # Błąd z takiej odpowiedzi potrafił trafić do następnej tury jako "z kodu gry".
+# Wiedza przed kodem (od 1.8.0): gdy model pisze własny kod, a w tej turze nie sięgnął do bazy wiedzy BK,
+# silnik sam pobiera pasujące wzorce (wb_knowledge) i daje modelowi jedną rundę na porównanie. on / off.
+KB_CHECK_MODE = os.environ.get("REFORGER_KB_CHECK", "on").strip().lower()
+if KB_CHECK_MODE not in ("on", "off"):
+    KB_CHECK_MODE = "on"
 EMERGENCY_IN_HISTORY = os.environ.get("REFORGER_EMERGENCY_IN_HISTORY", "placeholder").strip().lower()
 if EMERGENCY_IN_HISTORY not in ("placeholder", "keep"):
     EMERGENCY_IN_HISTORY = "placeholder"
@@ -77,4 +82,4 @@ def config_summary() -> str:
             f"limit_api_klasy={SOFT_LIMIT_CLASS_SEARCH}/inne={SOFT_LIMIT_OTHER_SEARCH} "
             f"limit_widoków={VIEW_LIMIT_PER_FILE} weryfikator={VERIFY_MODE} awaryjne_w_historii={EMERGENCY_IN_HISTORY} "
             f"rozumowanie_w_turze={THINKING_KEEP_CHARS if THINKING_KEEP_CHARS >= 0 else 'całość'} "
-            f"kontrola_api={API_CHECK_MODE}")
+            f"kontrola_api={API_CHECK_MODE} wiedza_przed_kodem={KB_CHECK_MODE}")

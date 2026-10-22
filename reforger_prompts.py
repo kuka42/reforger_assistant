@@ -44,6 +44,10 @@ differently spelled searches, say that it was not found; do not keep guessing fu
 Every API name used in code must be confirmed by a tool result in this conversation. When the user
 reports a compile error or says code does not work, verify each name with api_search before answering
 and never repeat a name the compiler rejected (also not in another form, e.g. GetGame().X).
+Enforce Script has no ternary operator ?: , no ?. operator and no float suffix (write 0.5, not 0.5f).
+In overrides call super.Method(...) unless you intentionally replace the behaviour; a modded class
+changes ALL instances of that class. Before writing code for an unfamiliar system, call wb_knowledge with
+the topic (e.g. "replication", "entity lifecycle", "enforce language pitfall").
 Terminology: muzzle = lufa / wylot lufy (NOT magazyn); magazine = magazynek.
 Check inherited methods on the declared base type (e.g. IEntity), not only on the
 concrete class, and read the parent class when a method is not listed.
@@ -207,3 +211,32 @@ SYNTH_FAILED = (                      # {cause}
 FOOTER_VERIFY = "\n\n_[Weryfikacja automatyczna cytatów: {shown}{more}]_"     # {shown} {more}
 FOOTER_VERIFY_MORE = "; (+{n} więcej)"                                          # {n}
 FOOTER_API = "\n\n_[Kontrola API: niepotwierdzone w wynikach narzędzi: {problems}. Sprawdź te nazwy przed użyciem.]_"  # {problems}
+
+
+# ---------------------------------------------------------------- od 1.7.1: błędy kompilatora z linią, składnia, narzędzia odczytu
+HINT_COMPILE_LINES = (                # {errors} {kb} {project}
+    "[Uwaga systemowa] Kompilator zgłosił błędy:\n\n{errors}\n\n{kb}{project}"
+    "Popraw dokładnie wskazaną instrukcję i podaj cały poprawiony kod; nie zgaduj innych przyczyn.")
+COMPILE_LINE_FOUND = (                # {file} {line} {message} {excerpt} {findings}
+    "{file}, linia {line}: {message}\nJeśli plik zawiera kod z Twojej ostatniej odpowiedzi, "
+    "ta linia to (>> oznacza wskazaną linię):\n{excerpt}{findings}")
+COMPILE_LINE_FINDINGS = "\nWykryto w tej linii: {findings}."           # {findings}
+COMPILE_LINE_MISSING = (              # {file} {line} {message}
+    "{file}, linia {line}: {message}\nNie znalazłem tej linii w Twoim ostatnim kodzie (plik mógł zostać zmieniony).")
+COMPILE_KB = "Pułapki składni Enforce Script (baza wiedzy BK, wb_knowledge):\n{sections}\n\n"   # {sections}
+COMPILE_PROJECT = "Aktualną treść pliku możesz przeczytać przez project (action='read').\n"
+HINT_SYNTAX_FIX = (                   # {problems}
+    "[Uwaga systemowa] Twój kod zawiera składnię, której Enforce Script nie przyjmuje: {problems}. "
+    "Popraw te miejsca i napisz pełną odpowiedź od nowa.")
+FOOTER_SYNTAX = "\n\n_[Kontrola składni: {problems}. Popraw przed kompilacją.]_"     # {problems}
+TOOL_ACTION_BLOCKED = "akcja {action!r} narzędzia {tool} jest niedostępna (tylko odczyt: {allowed})"  # {action} {tool} {allowed}
+TOOL_READ_ONLY_NOTE = " [W tym asystencie tylko odczyt: dozwolone akcje: {allowed}.]"              # {allowed}
+
+
+# ---------------------------------------------------------------- wiedza przed kodem (od 1.8.0)
+HINT_KB_CHECK = (                         # {query} {files} {excerpt}
+    "[Uwaga systemowa] Zanim wyślesz kod, porównaj go ze wzorcami z bazy wiedzy BK "
+    "(wb_knowledge('{query}'), pliki: {files}):\n\n{excerpt}\n\n"
+    "Jeśli wzorce pokazują inny, właściwy sposób (np. którą klasę modyfikować, gdzie dać warunek serwera, "
+    "kiedy wywołać super, ile razy wykona się nadpisana metoda), popraw kod. Jeśli Twój kod jest z nimi zgodny, "
+    "zostaw go. Potem napisz pełną odpowiedź od nowa.")

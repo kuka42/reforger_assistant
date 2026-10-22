@@ -1,6 +1,7 @@
 """Klient Enfusion MCP (JSON-RPC przez stdio, tylko narzędzia odczytu) i pomocnicze funkcje schematów narzędzi."""
 from __future__ import annotations
 
+import copy
 import json
 import os
 import queue
@@ -11,7 +12,8 @@ from collections import deque
 from pathlib import Path
 
 from reforger_config import VERSION, MCP_SCRIPT, GAME_PATH, MCP_TIMEOUT
-from reforger_rules import READ_ONLY_TOOLS
+from reforger_prompts import TOOL_READ_ONLY_NOTE
+from reforger_rules import READ_ONLY_TOOLS, TOOL_ACTION_LIMITS, TOOL_DROP_ARGS
 
 
 class MCPError(RuntimeError):
@@ -67,7 +69,7 @@ class MCPStdioClient:
                 listing = self.request("tools/list", params)
                 for tool in listing.get("tools", []):
                     if tool.get("name") in READ_ONLY_TOOLS:
-                        self.tools[tool["name"]] = tool
+                        self.tools[tool["name"]] = _restrict_tool(tool)
                 cursor = listing.get("nextCursor")
                 if not cursor:
                     break
@@ -228,3 +230,25 @@ def _raw_text(result: dict) -> str:
     if not chunks and "structuredContent" in result:
         chunks.append(json.dumps(result["structuredContent"], ensure_ascii=False))
     return "\n".join(chunks) or "[Brak wyniku tekstowego]"
+
+
+
+def _restrict_tool(tool: dict) -> dict:
+    """Narzędzia z akcjami (project, prefab): w schemacie tylko akcje odczytu, bez argumentów zapisu
+    i bez projectPath. Silnik dodatkowo blokuje niedozwoloną akcję przed wywołaniem MCP."""
+    name = tool.get("name")
+    allowed = TOOL_ACTION_LIMITS.get(name)
+    if allowed is None and name not in TOOL_DROP_ARGS:
+        return tool
+    tool = copy.deepcopy(tool)
+    schema = tool.setdefault("inputSchema", {"type": "object", "properties": {}})
+    props = schema.setdefault("properties", {})
+    for arg in TOOL_DROP_ARGS.get(name, ()):
+        props.pop(arg, None)
+    if allowed is not None:
+        action = props.get("action") if isinstance(props.get("action"), dict) else {"type": "string"}
+        action["enum"] = [a for a in action.get("enum", list(allowed)) if a in allowed] or list(allowed)
+        props["action"] = action
+        tool["description"] = str(tool.get("description", "")) + TOOL_READ_ONLY_NOTE.format(allowed=", ".join(allowed))
+    schema["required"] = [req for req in schema.get("required", []) if req in props]
+    return tool
