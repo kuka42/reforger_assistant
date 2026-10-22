@@ -1,26 +1,28 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""Reforger Assistant MCP BK — Ollama + Enfusion MCP.
+"""Reforger Assistant MCP BK — Ollama + Enfusion MCP: pętla rozmowy (silnik).
 
 Wyłącznie rozmawia z lokalnym serwerem Enfusion MCP BK, który korzysta z instalacji gry.
 Narzędzia zapisu / uruchamiania Workbencha są celowo niedostępne dla modelu.
+
+Układ plików (od 1.7.0):
+  reforger_config.py   konfiguracja (wersja, ścieżki, limity, tryby; zmienne środowiskowe)
+  reforger_prompts.py  teksty dla modelu i użytkownika (prompt systemowy, podpowiedzi, stopki)
+  reforger_rules.py    reguły jako dane (narzędzia tylko do odczytu, wzorce, listy nazw)
+  reforger_checks.py   kontrole odpowiedzi (weryfikator cytatów, kontrola nazw API, pamięć sesji)
+  reforger_mcp.py      klient Enfusion MCP (stdio)
+  reforger_helpers.py  naprawa wywołań narzędzi, skracanie kodu, tytuły wiki
+  ten plik             pętla rozmowy: wywołania narzędzi, kontekst, ponowienia, synteza
 
 Wymagania: Python 3.10+, Node.js, Ollama, zbudowany Enfusion MCP BK.
 """
 from __future__ import annotations
 
 import argparse
-from collections import deque
 import json
-import os
-from pathlib import Path
-import queue
-import subprocess
-import sys
-import threading
-import time
-import urllib.error
 import re
+import sys
+import urllib.error
 import urllib.request
 
 try:
@@ -28,382 +30,132 @@ try:
 except ImportError as _exc:  # jasny komunikat zamiast tracebacku
     raise SystemExit("Brak pliku reforger_helpers.py obok tego pliku: " + str(_exc))
 
-VERSION = "1.5.4-wiki"
-
-# Ścieżki potwierdzone podczas poprzednich testów użytkownika — edytowalne.
-MCP_SCRIPT = os.environ.get(
-    "ENFUSION_MCP_SCRIPT", r"F:\reforger-scripts\enfusion-mcp-BK\dist\index.js"
-)
-GAME_PATH = os.environ.get(
-    "ENFUSION_GAME_PATH", r"D:\SteamLibrary\steamapps\common\Arma Reforger"
-)
-
-def _env_int(name: str, default: int) -> int:
-    try:
-        return int(os.environ.get(name, default))
-    except (TypeError, ValueError):
-        return default
-
-
-def _env_float(name: str, default: float) -> float:
-    try:
-        return float(os.environ.get(name, default))
-    except (TypeError, ValueError):
-        return default
-
-
-OLLAMA_URL = os.environ.get("OLLAMA_CHAT_URL", "http://127.0.0.1:11434/api/chat")
-MODEL = os.environ.get("OLLAMA_MODEL", "gpt-oss:20b")
-NUM_CTX = _env_int("OLLAMA_NUM_CTX", 32768)
-# Wszystkie limity można zmienić zmienną środowiskową (PowerShell: $env:NAZWA = wartość)
-# przed startem serwera, bez edycji pliku. W logu przy starcie jest linia [CONFIG].
-OLLAMA_NUM_PREDICT = _env_int("OLLAMA_NUM_PREDICT", 16384)  # max tokenów JEDNEJ generacji (z rozumowaniem); 0 lub -1 = bez limitu
-MAX_TOOL_CALLS = _env_int("REFORGER_MAX_TOOL_CALLS", 25)    # limit wywołań MCP na jedno pytanie, przeciw zapętleniom
-MAX_HISTORY_MESSAGES = _env_int("REFORGER_MAX_HISTORY_MESSAGES", 60)  # pełne tury, nie urywamy historii narzędzi
-MAX_TOOL_RESULT_CHARS = _env_int("REFORGER_MAX_TOOL_RESULT_CHARS", 14000)   # jeden odczyt MCP w kontekście modelu
-MAX_TOOL_CONTEXT_CHARS = _env_int("REFORGER_MAX_TOOL_CONTEXT_CHARS", 45000)  # suma wyników MCP w aktywnej turze
-FINISHED_SOURCE_CHARS = _env_int("REFORGER_FINISHED_SOURCE_CHARS", 3600)    # po turze: max rozmiar jednego odczytu pliku
-FINISHED_EVIDENCE_CHARS = _env_int("REFORGER_FINISHED_EVIDENCE_CHARS", 20000)  # po turze: suma dowodów w historii (~6 tys. tokenów)
-COMPACT_SEARCH_RESULT_CHARS = _env_int("REFORGER_COMPACT_SEARCH_CHARS", 1200)  # wyniki api_search/asset_search tracą wartość najszybciej
-# Miękkie limity wyników (model sam podbija limit do 20, a wynik klasy to ~14 tys. znaków).
-SOFT_LIMIT_CLASS_SEARCH = _env_int("REFORGER_SOFT_LIMIT_CLASS", 5)    # api_search type=class/any
-SOFT_LIMIT_OTHER_SEARCH = _env_int("REFORGER_SOFT_LIMIT_OTHER", 10)   # api_search type=method/property/enum (wyniki są krótkie)
-COMPACT_OLD_RESULT_CHARS = _env_int("REFORGER_COMPACT_OLD_CHARS", 3600)  # starsze odczyty zachowują skrót
-MCP_TIMEOUT = _env_int("REFORGER_MCP_TIMEOUT", 90)          # inicjalizacja / narzędzia (sekundy)
-OLLAMA_TIMEOUT = _env_int("OLLAMA_TIMEOUT", 300)
-OLLAMA_TEMPERATURE = _env_float("OLLAMA_TEMPERATURE", 0.1)
-OLLAMA_THINK = os.environ.get("OLLAMA_THINK", "")   # np. low / medium / high; puste = nie wysyłaj
-THINKING_KEEP_CHARS = _env_int("REFORGER_THINKING_CHARS", 3000)   # ile końcówki rozumowania zostaje w kontekście w obrębie tury; 0 = nic, -1 = całość
-VIEW_LIMIT_PER_FILE = _env_int("REFORGER_VIEW_LIMIT", 6)    # max lokalnych widoków (query/zakres) jednego pliku w turze
-# Weryfikator cytatów: off = wyłączony; log = tylko wpisy [VERIFY] w logu (domyślnie);
-# footer = dodatkowo dopisuje znacznik na końcu odpowiedzi.
-VERIFY_MODE = os.environ.get("REFORGER_VERIFY", "log").strip().lower()
-if VERIFY_MODE not in ("off", "log", "footer"):
-    VERIFY_MODE = "log"
-# Odpowiedzi awaryjne (synteza bez pełnego badania) w kontekście modelu: placeholder (domyślnie) albo keep.
-# Błąd z takiej odpowiedzi potrafił trafić do następnej tury jako "z kodu gry".
-EMERGENCY_IN_HISTORY = os.environ.get("REFORGER_EMERGENCY_IN_HISTORY", "placeholder").strip().lower()
-if EMERGENCY_IN_HISTORY not in ("placeholder", "keep"):
-    EMERGENCY_IN_HISTORY = "placeholder"
-
-
-def config_summary() -> str:
-    return (f"[CONFIG] wersja={VERSION} model={MODEL} num_ctx={NUM_CTX} "
-            f"num_predict={OLLAMA_NUM_PREDICT if OLLAMA_NUM_PREDICT > 0 else 'bez limitu'} "
-            f"temperature={OLLAMA_TEMPERATURE} think={OLLAMA_THINK or '-'} "
-            f"max_wywołań_MCP={MAX_TOOL_CALLS} wynik_narzędzia={MAX_TOOL_RESULT_CHARS} "
-            f"kontekst_narzędzi={MAX_TOOL_CONTEXT_CHARS} dowody_po_turze={FINISHED_EVIDENCE_CHARS} "
-            f"limit_api_klasy={SOFT_LIMIT_CLASS_SEARCH}/inne={SOFT_LIMIT_OTHER_SEARCH} "
-            f"limit_widoków={VIEW_LIMIT_PER_FILE} weryfikator={VERIFY_MODE} awaryjne_w_historii={EMERGENCY_IN_HISTORY} "
-            f"rozumowanie_w_turze={THINKING_KEEP_CHARS if THINKING_KEEP_CHARS >= 0 else 'całość'}")
+# Moduły projektu (od 1.7.0). Nazwy są importowane jawnie do przestrzeni silnika, więc wszystko,
+# co było dostępne jako reforger_assistant_MCP_BK.X (serwer WEB, testy), działa bez zmian.
+try:
+    from reforger_config import (  # noqa: F401
+        VERSION,
+        MCP_SCRIPT,
+        GAME_PATH,
+        _env_int,
+        _env_float,
+        OLLAMA_URL,
+        MODEL,
+        NUM_CTX,
+        OLLAMA_NUM_PREDICT,
+        MAX_TOOL_CALLS,
+        MAX_HISTORY_MESSAGES,
+        MAX_TOOL_RESULT_CHARS,
+        MAX_TOOL_CONTEXT_CHARS,
+        FINISHED_SOURCE_CHARS,
+        FINISHED_EVIDENCE_CHARS,
+        COMPACT_SEARCH_RESULT_CHARS,
+        SOFT_LIMIT_CLASS_SEARCH,
+        SOFT_LIMIT_OTHER_SEARCH,
+        COMPACT_OLD_RESULT_CHARS,
+        MCP_TIMEOUT,
+        OLLAMA_TIMEOUT,
+        OLLAMA_TEMPERATURE,
+        OLLAMA_THINK,
+        THINKING_KEEP_CHARS,
+        VIEW_LIMIT_PER_FILE,
+        VERIFY_MODE,
+        API_CHECK_MODE,
+        EMERGENCY_IN_HISTORY,
+        config_summary,
+    )
+    from reforger_prompts import (  # noqa: F401
+        SYSTEM_PROMPT,
+        EMERGENCY_PLACEHOLDER,
+        WIKI_TITLE_HINT,
+        HINT_EMPTY_NO_TOOLS,
+        HINT_RETRY_AFTER_EMPTY,
+        HINT_INCOMPLETE_RETRY,
+        HINT_API_FIX,
+        HINT_STALL,
+        HINT_COMPILE_ERROR,
+        HINT_COMPILE_ERROR_LOOKUP,
+        TOOL_DUP_IN_CONTEXT,
+        TOOL_DUP_BLOCKED,
+        TOOL_VIEW_LIMIT,
+        TOOL_MCP_LIMIT,
+        TOOL_FILE_SHORTENED,
+        MSG_EMPTY_TWICE,
+        NOTE_INCOMPLETE,
+        SYNTH_NO_EVIDENCE,
+        SYNTH_INSTRUCTIONS,
+        SYNTH_SYSTEM_SUFFIX,
+        SYNTH_SECOND_ATTEMPT,
+        SYNTH_FOOTER,
+        SYNTH_FAILED,
+        FOOTER_VERIFY,
+        FOOTER_VERIFY_MORE,
+        FOOTER_API,
+    )
+    from reforger_rules import (  # noqa: F401
+        READ_ONLY_TOOLS,
+        KEEP_PREFAB_BLOCKS,
+        VIEW_QUERY_KEYS,
+        VIEW_START_KEYS,
+        VIEW_END_KEYS,
+        GAME_READ_ALIASES,
+        VIEW_MAX_LINES,
+        _CODE_BLOCK_RE,
+        _PATH_RE,
+        _OWN_CODE_RE,
+        _EXAMPLE_RE,
+        _GAME_QUOTE_RE,
+        _EXAMPLE_PATH_RE,
+        _GAME_LABEL_RE,
+        _ENTRY_GUID_RE,
+        _SCRIPT_LIKE_RE,
+        _PREFAB_LIKE_RE,
+        _SEPARATOR_RE,
+        _COMPILE_ERR_RE,
+        _API_GAME_CLASSES,
+        _API_GLOBAL_OK,
+        _API_METHOD_OK,
+        _API_CLASS_OK,
+        _API_KEYWORDS,
+        _NON_CODE_LANGS,
+        _API_CODE_BLOCK_RE,
+    )
+    from reforger_checks import (  # noqa: F401
+        _SESSION_FILES,
+        _SESSION_FILES_MAX,
+        _SESSION_FILE_CAP,
+        _path_key,
+        _session_files,
+        _norm_code,
+        _display_name,
+        _find_evidence,
+        _verify_answer,
+        _log_verification,
+        _verification_footer,
+        _is_wiki_miss,
+        _SESSION_META,
+        _EVIDENCE_CAP_CHARS,
+        _session_meta,
+        _add_evidence,
+        _strip_code_noise,
+        _api_calls,
+        _evidence_texts,
+        _find_class_method,
+        _api_problems,
+        _api_footer,
+    )
+    from reforger_mcp import (  # noqa: F401
+        MCPError,
+        MCPStdioClient,
+        ollama_tool_definitions,
+        tool_schema_hint,
+        _raw_text,
+    )
+except ImportError as _exc:
+    raise SystemExit("Brak pliku modułu asystenta obok reforger_assistant_MCP_BK.py: " + str(_exc))
 
 
 print(config_summary(), flush=True)
-
-# Ściśle tylko narzędzia do odczytu. Nie wystawiamy project, mod, wb_* itd.
-READ_ONLY_TOOLS = (
-    "asset_search", "game_browse", "game_read", "api_search",
-    "component_search", "wiki_search", "wiki_read", "wb_knowledge",
-)
-
-SYSTEM_PROMPT = """
-You are a technical assistant specializing in Arma Reforger modding
-and Enfusion / Enforce Script.
-
-Always communicate with the user in Polish.
-Keep original API names, class names and code identifiers unchanged.
-
-CORE PRINCIPLES
-- Treat Enfusion MCP BK as the primary source of truth for game-specific code.
-- Do not invent classes, methods, parameters, events or file paths.
-- Distinguish verified facts from assumptions.
-- An API declaration, successful compilation and correct runtime behavior
-  are three different levels of verification.
-- Do not claim that code works unless it has actually been tested.
-
-TOOLS (exact names; no other tools exist)
-- api_search(query, limit): classes, methods, enums of the script API.
-- asset_search(query, type, limit): searches file NAMES only, not file content.
-  Use type 'script' for class names (SCR_*, *Component, *UserAction); type 'prefab' only for prefab names.
-- game_read(path): reads one game file (script, prefab, config).
-- game_browse(path, pattern): lists a directory.
-- component_search, wiki_search, wiki_read, wb_knowledge.
-There is NO search, grep, browser, python or shell tool. Never call them.
-Paths: scripts/Game/generated/<Group>/X.c are API stubs (proto external);
-scripts/Game/... and scripts/GameCode/... are game code; Prefabs/... are prefabs.
-If game_read fails, take the real path from the asset_search hint or run asset_search.
-api_search and asset_search return SIMILAR names when the exact one does not exist. Read the
-first line of each result: "[Dokładne trafienie ...]" means found; "[BRAK DOKŁADNEGO TRAFIENIA
-...]" means the name was NOT found. Then never describe that name as existing and never use it
-in code or in a "verified" list.
-api_search covers class members only. Global functions (Print, PrintFormat, ...) and general
-Enforce Script questions: use wiki_search and then wiki_read the best page (search returns only
-truncated snippets). wiki_read takes the page TITLE exactly as in the "## Title" header of a wiki_search
-result (e.g. "Scripting: Conventions"), never the Source URL or its Arma_Reforger:... slug.
-game_read also accepts query (search text inside the WHOLE file) and line_start/line_end.
-When a file is shown shortened, use query instead of guessing what the omitted part contains.
-game_browse "pattern" matches FILE NAMES (glob), never file content.
-For a method or field name use api_search with type=method. If a name is not found after 2-3
-differently spelled searches, say that it was not found; do not keep guessing further names.
-Terminology: muzzle = lufa / wylot lufy (NOT magazyn); magazine = magazynek.
-Check inherited methods on the declared base type (e.g. IEntity), not only on the
-concrete class, and read the parent class when a method is not listed.
-For questions about how something is configured in a prefab, find and read a real vanilla
-prefab that uses that component (asset_search with the prefab name, then game_read).
-Never describe prefab fields you have not read.
-
-CODE RESEARCH
-- Use asset_search to discover files and game_read to inspect their contents.
-- Use api_search to investigate classes and methods.
-- Before generating code, inspect the relevant base classes,
-  method signatures and existing implementation patterns.
-- If a tool fails, do not treat the attempted lookup as evidence.
-- Prefer a few relevant source files over reading many unrelated files.
-- For questions about Enforce Script syntax, modding mechanisms,
-  and engine concepts, consult wiki_search and wiki_read before
-  relying on general programming knowledge.
-
-ENFORCE SCRIPT
-- Enforce Script is not C++ or C#. Do not assume identical syntax
-  or engine lifecycle behavior.
-- Understand the difference between ordinary inheritance and modded classes.
-- "class Child : Parent" creates a new derived class.
-- "modded class ExistingClass" modifies an existing class through
-  Enforce Script's modding mechanism.
-- Verify lifecycle callbacks, member accessibility and method signatures
-  before using them in generated code.
-- Never assume a class or component can be attached to a prefab
-  without checking how that mechanism works.
-- When modifying the behavior of an existing game script class,
-  prefer "modded class ExistingClass" where appropriate.
-- Do not use ordinary inheritance as a substitute for modifying
-  an existing class. Use inheritance when a genuinely new class is needed.
-- Changing prefab configuration or component attributes is not
-  the same as modifying an existing script class.
-
-USER INTENT
-- Respect the context of the ongoing conversation.
-- Do not silently reinterpret units, values or requirements.
-- If an ambiguity fundamentally changes the implementation,
-  ask one brief clarifying question.
-
-OUTPUT
-- Describe methods using only the comments from files you actually read;
-  if there is no comment, say so. Do not invent examples of usage.
-- Never invent literal values (icon names, localization keys, GUIDs, field names).
-  Copy them from files you read, or mark them "WYMYSLONE - do zastapienia".
-- Label code "z kodu gry" ONLY if it is copied verbatim from a game_read result you received;
-  anything you write yourself is "szkic". Never attribute code to a file you did not read.
-- Never write "zobaczone w API" or "zweryfikowane" for a name unless it appears in a tool result.
-- Quote line numbers only if they come from a local game_read view (they match the file); never guess them.
-- Components are obtained with FindComponent(Type) and Type.Cast(...) as in game code;
-  there is no GetComponent<T>().
-- Provide practical, focused answers without unnecessary explanations.
-- Explain what was verified and what still requires testing.
-- Do not modify files or operate Workbench.
-- Generate code only as a proposal for the user to review!
-""".strip()
-
-
-class MCPError(RuntimeError):
-    pass
-
-
-class MCPStdioClient:
-    """Minimalny klient MCP JSON-RPC 2.0 przez stdin/stdout procesu Node.
-
-    Uwaga: stdout na Windows to potok blokujący; wątek czyta go do kolejki,
-    a wywołania request() mają rzeczywisty timeout.
-    """
-
-    def __init__(self, script: str = MCP_SCRIPT, timeout: int = MCP_TIMEOUT):
-        self.script = script
-        self.timeout = timeout
-        self.process: subprocess.Popen | None = None
-        self.responses: queue.Queue = queue.Queue()
-        self.logs = deque(maxlen=30)
-        self.next_id = 0
-        self.tools: dict[str, dict] = {}
-
-    def __enter__(self) -> "MCPStdioClient":
-        if not Path(self.script).is_file():
-            raise MCPError(f"Nie znaleziono serwera MCP: {self.script}")
-        env = os.environ.copy()
-        env.update({
-            "ENFUSION_GAME_PATH": GAME_PATH,
-        })
-        try:
-            self.process = subprocess.Popen(
-                ["node", self.script], env=env,
-                stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                encoding="utf-8", errors="replace", text=True, bufsize=1,
-            )
-        except OSError as exc:
-            raise MCPError(f"Nie można uruchomić Node/Enfusion MCP: {exc}") from exc
-
-        threading.Thread(target=self._stdout_reader, daemon=True).start()
-        threading.Thread(target=self._stderr_reader, daemon=True).start()
-        try:
-            hello = self.request("initialize", {
-                "protocolVersion": "2025-06-18",
-                "capabilities": {},
-                "clientInfo": {"name": "reforger-python-assistant", "version": VERSION},
-            })
-            if not isinstance(hello, dict) or "protocolVersion" not in hello:
-                raise MCPError("Serwer nie zwrócił wersji protokołu podczas initialize")
-            self._send({"jsonrpc": "2.0", "method": "notifications/initialized"})
-            cursor = None
-            while True:
-                params = {"cursor": cursor} if cursor else {}
-                listing = self.request("tools/list", params)
-                for tool in listing.get("tools", []):
-                    if tool.get("name") in READ_ONLY_TOOLS:
-                        self.tools[tool["name"]] = tool
-                cursor = listing.get("nextCursor")
-                if not cursor:
-                    break
-            if not self.tools:
-                raise MCPError("BK połączył się, ale nie udostępnia żadnego narzędzia odczytu")
-            return self
-        except BaseException:
-            self.close()
-            raise
-
-    def _stdout_reader(self) -> None:
-        assert self.process and self.process.stdout
-        try:
-            for line in self.process.stdout:
-                try:
-                    message = json.loads(line)
-                except json.JSONDecodeError:
-                    self.logs.append("Niepoprawny JSON z stdout MCP: " + line[:250])
-                    continue
-                if isinstance(message, dict):
-                    self.responses.put(message)
-        finally:
-            self.responses.put(None)
-
-    def _stderr_reader(self) -> None:
-        assert self.process and self.process.stderr
-        for line in self.process.stderr:
-            self.logs.append(line.rstrip()[:500])
-
-    def _send(self, message: dict) -> None:
-        if not self.process or not self.process.stdin:
-            raise MCPError("Proces MCP nie został uruchomiony")
-        try:
-            self.process.stdin.write(json.dumps(message, ensure_ascii=False) + "\n")
-            self.process.stdin.flush()
-        except (OSError, BrokenPipeError) as exc:
-            raise MCPError(f"Nie można wysłać wiadomości do MCP: {exc}") from exc
-
-    def request(self, method: str, params: dict | None = None) -> dict:
-        self.next_id += 1
-        request_id = self.next_id
-        self._send({"jsonrpc": "2.0", "id": request_id,
-                    "method": method, "params": params or {}})
-        deadline = time.monotonic() + self.timeout
-        while True:
-            remaining = deadline - time.monotonic()
-            if remaining <= 0:
-                raise MCPError(f"Przekroczono czas odpowiedzi MCP ({method}, {self.timeout}s)")
-            try:
-                msg = self.responses.get(timeout=remaining)
-            except queue.Empty as exc:
-                details = "; ".join(list(self.logs)[-3:])
-                raise MCPError(f"MCP nie odpowiedział ({method}); {details}") from exc
-            if msg is None:
-                raise MCPError("Proces MCP zakończył połączenie; " + "; ".join(list(self.logs)[-3:]))
-            if "method" in msg and "id" in msg:
-                # Nie udostępniamy operacji od MCP do użytkownika; ping obsługujemy.
-                if msg["method"] == "ping":
-                    self._send({"jsonrpc": "2.0", "id": msg["id"], "result": {}})
-                else:
-                    self._send({"jsonrpc": "2.0", "id": msg["id"],
-                                "error": {"code": -32601, "message": "Unsupported client request"}})
-                continue
-            if msg.get("id") != request_id:
-                # Notyfikacje nie mają id; obecny klient wysyła tylko jeden request naraz.
-                if "id" in msg:
-                    self.logs.append(f"Pominięto nieoczekiwaną odpowiedź MCP id={msg['id']}")
-                continue
-            if "error" in msg:
-                raise MCPError(f"MCP {method}: {msg['error']}")
-            result = msg.get("result")
-            if not isinstance(result, dict):
-                raise MCPError(f"MCP {method} zwrócił nieoczekiwany format")
-            return result
-
-    def call_tool(self, name: str, arguments: dict) -> dict:
-        if name not in self.tools:
-            raise MCPError(f"Narzędzie {name!r} jest niedostępne lub niewłączone")
-        if not isinstance(arguments, dict):
-            raise MCPError("Argumenty narzędzia muszą być obiektem JSON")
-        schema = self.tools[name].get("inputSchema", {})
-        properties = schema.get("properties", {})
-        required = schema.get("required", [])
-        unknown = sorted(set(arguments) - set(properties))
-        missing = sorted(set(required) - set(arguments))
-        if unknown or missing:
-            raise MCPError(f"Niepoprawne argumenty {name}: nieznane={unknown}, brak={missing}")
-        return self.request("tools/call", {"name": name, "arguments": arguments})
-
-    def close(self) -> None:
-        p = self.process
-        self.process = None
-        if not p:
-            return
-        if p.stdin:
-            try:
-                p.stdin.close()
-            except OSError:
-                pass
-        try:
-            p.wait(timeout=2)
-        except subprocess.TimeoutExpired:
-            p.terminate()
-            try:
-                p.wait(timeout=2)
-            except subprocess.TimeoutExpired:
-                p.kill()
-                p.wait()
-        for pipe in (p.stdout, p.stderr):
-            if pipe:
-                try:
-                    pipe.close()
-                except OSError:
-                    pass
-
-    def __exit__(self, *_: object) -> None:
-        self.close()
-
-
-def ollama_tool_definitions(mcp_tools: dict[str, dict]) -> list[dict]:
-    return [{"type": "function", "function": {
-        "name": name,
-        "description": tool.get("description", ""),
-        "parameters": tool.get("inputSchema", {"type": "object", "properties": {}}),
-    }} for name, tool in mcp_tools.items()]
-
-
-def tool_schema_hint(mcp_tools: dict[str, dict], name: str) -> str:
-    """Pomoc z PRAWDZIWEGO tools/list BK; nie zgadujemy nazw ani schematow."""
-    if name not in mcp_tools:
-        signatures = []
-        for candidate, tool in sorted(mcp_tools.items()):
-            schema = tool.get("inputSchema", {})
-            props = schema.get("properties", {})
-            required = set(schema.get("required", []))
-            args = ", ".join((p + "*" if p in required else p) for p in props)
-            signatures.append(f"{candidate}({args})")
-        return "Dostępne narzędzia MCP (* = wymagane): " + "; ".join(signatures)[:1800]
-    schema = mcp_tools[name].get("inputSchema", {})
-    hint = {
-        "narzedzie": name,
-        "wymagane": schema.get("required", []),
-        "parametry": schema.get("properties", {}),
-    }
-    return "Schemat parametrów z MCP: " + json.dumps(hint, ensure_ascii=False)[:3000]
 
 
 def _trim_thinking(assistant: dict) -> None:
@@ -474,9 +226,6 @@ def _looks_like_prefab(text: str) -> bool:
     """Wynik game_read dla prefabu ma nagłówek '// Prefabs/....et (from .pak)'."""
     first = _strip_note(text).split("\n", 1)[0]
     return first.startswith("//") and ".et " in first + " "
-
-
-KEEP_PREFAB_BLOCKS = ("ActionsManagerComponent",)
 
 
 def _digest_prefab(text: str) -> str:
@@ -585,12 +334,6 @@ def _ledger(read_paths: list[str], searches: list[str], misses: list[str] | None
     return " ".join(parts)[:1100]
 
 
-VIEW_QUERY_KEYS = ("query", "pattern", "grep", "search", "find", "text", "contains")
-VIEW_START_KEYS = ("line_start", "start_line", "start", "from_line")
-VIEW_END_KEYS = ("line_end", "end_line", "end", "to_line")
-GAME_READ_ALIASES = ("game_read", "read", "open", "read_file", "cat", "functions.game_read")
-
-
 def _extract_view_spec(arguments: dict):
     """Wycina z argumentów game_read parametry lokalnego widoku (game_read w BK ma tylko 'path')."""
     args = dict(arguments)
@@ -615,9 +358,6 @@ def _view_label(view: dict) -> str:
     if "query" in view:
         return f"query={view['query']!r}"
     return f"linie {view.get('start', 1)}-{view.get('end', '...')}"
-
-
-VIEW_MAX_LINES = 160
 
 
 def _body_lines(raw: str):
@@ -698,210 +438,6 @@ def _with_local_view_params(defs: list[dict]) -> list[dict]:
     return defs
 
 
-# ---------------------------------------------------------------- weryfikator cytatów
-# Pliki odczytane w danej rozmowie (klucz: id listy messages): ścieżka(lowercase) -> pełny tekst z game_read.
-_SESSION_FILES: dict[int, dict[str, str]] = {}
-_SESSION_FILES_MAX = 20
-_SESSION_FILE_CAP = 60
-
-
-def _path_key(path) -> str:
-    return str(path or "").replace("\\", "/").strip().lstrip("/").lower()
-
-
-def _session_files(messages: list) -> dict[str, str]:
-    key = id(messages)
-    store = _SESSION_FILES.get(key)
-    if store is None:
-        if len(_SESSION_FILES) >= _SESSION_FILES_MAX:
-            _SESSION_FILES.pop(next(iter(_SESSION_FILES)))
-        store = _SESSION_FILES[key] = {}
-    return store
-
-
-_CODE_BLOCK_RE = re.compile(r"```[ \t]*([\w+\-]*)[ \t]*\n(.*?)```", re.S)
-_PATH_RE = re.compile(r"((?:scripts|prefabs|configs|ui)/[\w./\-{}]+\.(?:c|et|conf|layout|proto))", re.I)
-_OWN_CODE_RE = re.compile(r"szkic|nowy plik|nowa klasa|WYMY[ŚS]L", re.I)
-# Tuż przed blokiem: "Przykład użycia" / "Jak użyć" = kod własny modelu, chyba że ten sam fragment
-# podpisuje go jako cytat z gry ("fragment z gry", "Plik: ...", ścieżka).
-_EXAMPLE_RE = re.compile(r"przykład|przyklad|jak użyć|jak uzyc|użycie|uzycie|w własnym|w swoim|własnym skrypcie", re.I)
-_GAME_QUOTE_RE = re.compile(r"fragment\w*\s+z\s+(?:gry|kodu|pliku)|z kodu gry|z pliku|plik\s*:|źródł|kod\s+pochodzi", re.I)
-# Separator pominięcia: sama linia "..." albo komentarz zaczynający się od "..." (np. "// ... (reszta Init)")
-_EXAMPLE_PATH_RE = re.compile(r"example|yourscript|your_script|mymod|myscript|twojmod|twoj_mod|sample|placeholder", re.I)
-_GAME_LABEL_RE = re.compile(r"z\s+kodu\s+gry|fragment\w*\s+z\s+gry|kod\s+z\s+gry", re.I)
-_ENTRY_GUID_RE = re.compile(r'([A-Za-z_]\w*)\s+"\{([0-9A-Fa-f]{16})\}"\s*[:{]')     # (klasa wpisu, GUID wpisu) w prefabie
-_SCRIPT_LIKE_RE = re.compile(r"^\s*(?:proto external|modded class|override\s|class\s+\w+\s*[:{])", re.M)
-_PREFAB_LIKE_RE = re.compile(r'^\s*\w+\s+"\{[0-9A-Fa-f]{16}\}"', re.M)
-_SEPARATOR_RE = re.compile(r"^\s*(?:\.\.\.|…|//\s*(?:\.\.\.|…).*|/\*\s*(?:\.\.\.|…).*\*/)\s*$")
-
-
-def _norm_code(text: str) -> str:
-    text = re.sub(r"/\*.*?\*/", "", text, flags=re.S)
-    text = re.sub(r"//[^\n]*", "", text)
-    return re.sub(r"\s+", "", text)
-
-
-def _display_name(key: str, text: str) -> str:
-    """Nazwa pliku z oryginalną wielkością liter (z nagłówka odczytu '// ścieżka (from .pak)'), inaczej z klucza."""
-    m = re.match(r"//\s*(\S+)\s*\(from", text or "")
-    return (m.group(1) if m else key).rsplit("/", 1)[-1]
-
-
-def _find_evidence(files: dict[str, str], path: str):
-    pk = _path_key(path)
-    if pk in files:
-        return pk, files[pk]
-    for key, text in files.items():
-        if key.endswith("/" + pk) or pk.endswith("/" + key):
-            return key, text
-    return None, None
-
-
-def _verify_answer(answer: str, files: dict[str, str]):
-    """Sprawdza bloki kodu przypisane do plików gry: czy ich linie występują w odczytanym pliku.
-    Zwraca (uwagi, liczba_sprawdzonych_bloków, liczba_zgodnych). Nic nie zmienia i nie woła modelu."""
-    findings: list[str] = []
-    checked = ok = 0
-    norm_cache: dict[str, str] = {}
-    prev_end = 0
-    pending_path = None
-    for match in _CODE_BLOCK_RE.finditer(answer):
-        block = match.group(2)
-        gap = answer[prev_end:match.start()]
-        prev_end = match.end()
-        stripped = block.strip()
-        # Blok zawierający wyłącznie ścieżkę to etykieta następnego bloku.
-        only_path = _PATH_RE.fullmatch(stripped.strip("`' ")) if stripped and "\n" not in stripped else None
-        if only_path:
-            pending_path = only_path.group(1)
-            continue
-        lines = [re.sub(r"^\s*\d+\|\s?", "", ln) for ln in block.split("\n")]      # numeracja widoku
-        path = None
-        head_paths = _PATH_RE.findall("\n".join(lines[:4]))
-        if head_paths:
-            path = head_paths[0]
-        else:
-            near = _PATH_RE.findall(gap[-400:])
-            if near:
-                path = near[-1]
-            elif pending_path and len(gap) < 250:
-                path = pending_path
-        pending_path = None
-        window = gap[-250:] + "\n" + "\n".join(lines[:3])
-        # Decyduje ostatnia niepusta linia TUŻ przed blokiem: nagłówek "Przykład użycia" bez podpisu
-        # "fragment z gry" / "Plik: ..." oznacza kod własny, nawet gdy wcześniej w akapicie padła ścieżka.
-        gap_lines = [ln for ln in gap.split("\n") if ln.strip()]
-        last_line = gap_lines[-1] if gap_lines else ""
-        own_example = bool(_EXAMPLE_RE.search(last_line)
-                           and not (_GAME_QUOTE_RE.search(last_line) or _PATH_RE.search(last_line))
-                           and not head_paths)
-        if path:
-            low = path.lower()
-            if ((low.endswith((".et", ".conf", ".layout")) and _SCRIPT_LIKE_RE.search(block))
-                    or (low.endswith(".c") and _PREFAB_LIKE_RE.search(block))):
-                path = None                 # przypisanie nie pasuje do treści bloku: nie weryfikujemy go z tym plikiem
-        first_lines = "\n".join(lines[:3])
-        attributed = bool(path) and not (_OWN_CODE_RE.search(window) or own_example)
-        if (not path and not _OWN_CODE_RE.search(window) and not own_example and _GAME_LABEL_RE.search(gap[-220:])):
-            findings.append("blok oznaczony jako 'z kodu gry' nie wskazuje pliku - cytat niepotwierdzony")
-        if not attributed or _EXAMPLE_PATH_RE.search(path or ""):
-            # Nowy kod nie powinien używać identyfikatorów istniejących wpisów (kolizja/nadpisanie wpisu).
-            for cls, guid in dict.fromkeys(_ENTRY_GUID_RE.findall(block)):
-                owner = next((k for k, txt in files.items() if "{" + guid.upper() + "}" in txt.upper()), None)
-                if not owner:
-                    continue
-                found = re.search(r'([A-Za-z_]\w*)\s+"\{' + guid + r'\}"', files[owner], re.I)
-                if found and found.group(1) != cls:
-                    # Ten sam GUID dla INNEJ klasy = kolizja identyfikatorów. Ta sama klasa to cytat albo
-                    # prawidłowe nadpisanie wpisu w override prefabu (np. ActionsManagerComponent).
-                    msg = (f"GUID {{{guid}}} jest w '{_display_name(owner, files[owner])}' przypisany do wpisu "
-                           f"{found.group(1)}, a tutaj użyty dla {cls}: kolizja identyfikatorów "
-                           "(nowy wpis powinien mieć własny GUID)")
-                    if msg not in findings:
-                        findings.append(msg)
-        if (not path or _OWN_CODE_RE.search(window) or own_example
-                or _EXAMPLE_PATH_RE.search(path) or re.search(r"\bnp\.|e\.g\.", first_lines)):
-            continue                     # kod własny modelu / ścieżka przykładowa / bez przypisanego pliku
-        key, text = _find_evidence(files, path)
-        if text is None:
-            findings.append(f"plik '{path}' nie został odczytany w tej rozmowie - cytat niepotwierdzony")
-            continue
-        checked += 1
-        fnorm = norm_cache.setdefault(key, _norm_code(text))
-        segments, current = [], []
-        for ln in lines:
-            if _SEPARATOR_RE.match(ln):
-                segments.append(current)
-                current = []
-            else:
-                current.append(ln)
-        segments.append(current)
-        bad_lines: list[str] = []
-        discontinuous = False
-        for seg in segments:
-            seg_norm = _norm_code("\n".join(seg))
-            if len(seg_norm) < 20 or seg_norm in fnorm:
-                continue
-            missing = [ln.strip() for ln in seg if len(_norm_code(ln)) >= 12 and _norm_code(ln) not in fnorm]
-            if not missing:
-                # krótkie linie (np. "return null;") sprawdzamy dopiero, gdy cały fragment nie pasuje do pliku
-                missing = [ln.strip() for ln in seg if len(_norm_code(ln)) >= 6 and _norm_code(ln) not in fnorm]
-            if missing:
-                bad_lines.extend(missing)
-            else:
-                discontinuous = True
-        if bad_lines:
-            sample = "; ".join(f"`{ln[:80]}`" for ln in bad_lines[:2])
-            findings.append(f"w bloku przypisanym do '{path}' nie znaleziono w pliku linii: {sample}")
-        elif discontinuous:
-            findings.append(f"blok przypisany do '{path}' łączy linie, które w pliku nie sąsiadują ze sobą")
-        else:
-            ok += 1
-        # klasa o tej samej nazwie w odczytanych plikach, ale z inną klasą bazową
-    for cm in re.finditer(r"\bclass\s+(\w+)\s*:\s*(\w+)", answer):
-        cname, parent = cm.groups()
-        for text in files.values():
-            found = re.search(rf"\bclass\s+{re.escape(cname)}\s*:\s*(\w+)", text)
-            if found and found.group(1) != parent:
-                msg = (f"klasa '{cname}' dziedziczy w odczytanym pliku po '{found.group(1)}', "
-                       f"a w odpowiedzi po '{parent}'")
-                if msg not in findings:
-                    findings.append(msg)
-                break
-    # Teza w prozie: "X dziedziczy po Y" vs deklaracja klasy w odczytanych plikach.
-    for pm in re.finditer(r"[`*]*(\w+)[`*]*\s+dziedziczy\s+po\s+[`*]*(\w+)", answer):
-        cname, parent = pm.groups()
-        for text in files.values():
-            found = re.search(rf"\bclass\s+{re.escape(cname)}\s*:\s*(\w+)", text)
-            if found:
-                if found.group(1) != parent:
-                    msg = (f"klasa '{cname}' dziedziczy w odczytanym pliku po '{found.group(1)}', "
-                           f"a w odpowiedzi po '{parent}'")
-                    if msg not in findings:
-                        findings.append(msg)
-                break
-    return findings, checked, ok
-
-
-def _log_verification(findings: list[str], checked: int, ok: int) -> None:
-    if findings:
-        print(f"  [VERIFY] UWAGI ({len(findings)}); bloków sprawdzonych: {checked}, zgodnych: {ok}", flush=True)
-        for item in findings:
-            print(f"  [VERIFY]   - {item}", flush=True)
-    else:
-        print(f"  [VERIFY] OK; bloków sprawdzonych: {checked}, zgodnych: {ok}", flush=True)
-
-
-def _verification_footer(findings: list[str]) -> str:
-    shown = "; ".join(findings[:4])
-    more = f"; (+{len(findings) - 4} więcej)" if len(findings) > 4 else ""
-    return f"\n\n_[Weryfikacja automatyczna cytatów: {shown}{more}]_"
-
-
-EMERGENCY_PLACEHOLDER = ("[Odpowiedź awaryjna: synteza bez pełnego badania. Jej treść nie została zweryfikowana i nie jest "
-                         "źródłem faktów; użytkownik widział ją w oknie czatu. Fakty o grze sprawdzaj w narzędziach od nowa.]")
-
-
 def _emergency_history_entry(content: str) -> dict:
     """Wpis do historii modelu dla odpowiedzi awaryjnej (patrz REFORGER_EMERGENCY_IN_HISTORY)."""
     if EMERGENCY_IN_HISTORY == "keep":
@@ -909,13 +445,29 @@ def _emergency_history_entry(content: str) -> dict:
     return {"role": "assistant", "content": EMERGENCY_PLACEHOLDER}
 
 
-WIKI_TITLE_HINT = ("\n[Podpowiedź: w wiki_read podaj tytuł dokładnie jak w nagłówku '## Tytuł' wyniku wiki_search "
-                   "(np. 'Scripting: Conventions'), bez adresu, bez prefiksu 'Arma Reforger:' i bez podkreślników. "
-                   "Sugestia 'Did you mean' bywa nietrafna.]")
-
-
-def _is_wiki_miss(text: str) -> bool:
-    return str(text or "").lstrip().startswith("No wiki page found")
+def _compile_error_lookup(question: str, meta: dict, mcp) -> dict | None:
+    """Błąd kompilatora w pytaniu: zapamiętaj odrzucone nazwy i sprawdź je od razu w api_search.
+    Zwraca jednorazową podpowiedź dla modelu albo None."""
+    found = [s for s in dict.fromkeys(_COMPILE_ERR_RE.findall(question or "")) if s not in meta["banned"]]
+    if not found:
+        return None
+    parts = []
+    for sym in found[:3]:
+        meta["banned"].add(sym)
+        meth = sym.replace("::", ".").split(".")[-1]
+        if "api_search" not in getattr(mcp, "tools", {}):
+            continue
+        args = {"query": meth, "type": "method", "limit": 10}
+        try:
+            result = mcp.call_tool("api_search", args)
+            raw = _raw_text(result)
+            _add_evidence(meta, raw)
+            parts.append(f"api_search('{meth}'):\n" + tool_text(result, "api_search", args)[:3000])
+            print(f"  [API] błąd kompilatora: {sym} - automatyczne api_search('{meth}')", flush=True)
+        except (MCPError, OSError, ValueError, TypeError) as exc:
+            print(f"  [API] automatyczne sprawdzenie {sym} nieudane: {exc!r}", flush=True)
+    lookup = HINT_COMPILE_ERROR_LOOKUP.format(results="\n\n".join(parts)) if parts else ""
+    return {"role": "user", "content": HINT_COMPILE_ERROR.format(symbols=", ".join(found), lookup=lookup)}
 
 
 def _suggest_paths(mcp, path: str) -> str:
@@ -1014,21 +566,6 @@ def _is_incomplete_answer(content: str) -> bool:
     if last.endswith(("...", "…", "(", ",")):
         return True
     return False
-
-
-def _raw_text(result: dict) -> str:
-    """Pełny tekst wyniku narzędzia, bez skracania i bez dopisków."""
-    chunks = []
-    for item in result.get("content", []):
-        if item.get("type") == "text":
-            chunks.append(str(item.get("text", "")))
-        else:
-            chunks.append("[Pominięto wynik nie-tekstowy narzędzia]")
-    # Nie dubluj tego samego kodu, gdy BK zwraca jednoczesnie content
-    # i structuredContent. Dublowanie zuzywalo kontekst bez nowych faktow.
-    if not chunks and "structuredContent" in result:
-        chunks.append(json.dumps(result["structuredContent"], ensure_ascii=False))
-    return "\n".join(chunks) or "[Brak wyniku tekstowego]"
 
 
 def _norm_query(query) -> str:
@@ -1195,23 +732,12 @@ def _synthesize_after_mcp_limit(question: str, messages: list[dict],
         chunks.append(section)
         remaining -= len(section)
     if not chunks:
-        return (f"Nie udało się zebrać żadnych potwierdzonych wyników MCP w tej turze ({cause}). "
-                "Nie podaję odpowiedzi z pamięci modelu, bo byłaby niezweryfikowana. "
-                "Spróbuj ponownie albo zadaj pytanie krócej. Przebieg wywołań jest w panelu MCP.")
+        return SYNTH_NO_EVIDENCE.format(cause=cause)
     evidence = "\n\n".join(chunks)
-    instructions = (
-        "Nie masz teraz dostępu do żadnych narzędzi. To końcowy etap odpowiedzi. "
-        "Odpowiedz po polsku na pytanie użytkownika na podstawie poniższych wyników. "
-        "Nie opisuj niezweryfikowanych przykładów jako działającego kodu. "
-        "Jako braki wymieniaj WYŁĄCZNIE to, czego naprawdę nie ma w poniższych wynikach; "
-        "najpierw dokładnie je przeszukaj. "
-        "Nie sugeruj nowych wywołań narzędzi; nie wypisuj wywołań funkcji. "
-        "Odpowiedź ma być przydatna i zwięzła.\n\n"
-        f"PYTANIE UŻYTKOWNIKA: {question}\n\nWYNIKI ODCZYTÓW MCP:\n{evidence}"
-    )
+    instructions = SYNTH_INSTRUCTIONS.format(question=question, evidence=evidence)
     simple = [
         {"role": "system", "content": messages[0].get("content", SYSTEM_PROMPT)
-         + "\nTeraz udziel odpowiedzi bez narzędzi. Nie generuj tool_calls."},
+         + SYNTH_SYSTEM_SUFFIX},
         *history,
         {"role": "user", "content": instructions},
     ]
@@ -1221,20 +747,12 @@ def _synthesize_after_mcp_limit(question: str, messages: list[dict],
             content = str(answer.get("content") or "").strip()
             if content and not answer.get("tool_calls") and not _is_incomplete_answer(content):
                 print(f"  [OLLAMA] Synteza po limicie OK (próba {attempt + 1}).", flush=True)
-                return content + f"\n\n_[Podsumowanie dostępnych wyników MCP: {cause}; odpowiedź może być niepełna.]_"
+                return content + SYNTH_FOOTER.format(cause=cause)
             print("  [OLLAMA] Synteza nie zwróciła kompletnego tekstu.", flush=True)
         except (RuntimeError, OSError) as exc:
             print(f"  [OLLAMA] Synteza nieudana: {exc}", flush=True)
-        simple = simple[:1] + [{"role": "user", "content":
-            "Napisz po polsku wyłącznie zwykły tekst. Nie używaj narzędzi. "
-            "Podsumuj potwierdzone fakty i braki; bez kodu, którego nie zweryfikowano.\n\n"
-            + instructions[:14000]}]
-    return (
-        f"Nie udało się przygotować odpowiedzi ({cause}). "
-        "Model nie zwrócił kompletnego tekstu nawet w osobnej syntezie "
-        "bez narzędzi. Zebrane wyniki MCP są widoczne w panelu; "
-        "nie potwierdzono gotowego rozwiązania."
-    )
+        simple = simple[:1] + [{"role": "user", "content": SYNTH_SECOND_ATTEMPT + instructions[:14000]}]
+    return SYNTH_FAILED.format(cause=cause)
 
 
 def ask(question: str, messages: list[dict], mcp: MCPStdioClient,
@@ -1265,7 +783,15 @@ def _ask_impl(question: str, messages: list[dict], mcp: MCPStdioClient,
     session_files = _session_files(messages)   # pełne teksty odczytanych plików (dla weryfikatora)
     view_counts: dict[str, int] = {}
     misses: list[str] = []
+    meta = _session_meta(messages)       # wyniki narzędzi w sesji i nazwy odrzucone przez kompilator
+    api_fix_rounds = 0
+    api_footer = ""
     pending_hint = None                  # jednorazowa podpowiedź do następnego wywołania (nie trafia do historii)
+    if API_CHECK_MODE != "off":
+        try:
+            pending_hint = _compile_error_lookup(question, meta, mcp)
+        except Exception as exc:  # kontrola nigdy nie psuje tury
+            print(f"  [API] sprawdzenie błędu kompilatora pominięte: {exc!r}", flush=True)
     empty_retries = 0
     empty_final_retries = 0              # ponowienia po pustej generacji PO użyciu narzędzi
     tools = _with_local_view_params(slim_tool_definitions(mcp.tools))
@@ -1314,13 +840,9 @@ def _ask_impl(question: str, messages: list[dict], mcp: MCPStdioClient,
                     empty_retries += 1
                     print(f"  [OLLAMA] Pusta odpowiedź bez użycia MCP w tej turze - ponowienie {empty_retries}/2", flush=True)
                     phase("Model zwrócił pustą odpowiedź - ponawiam")
-                    pending_hint = {"role": "user", "content":
-                        "[Uwaga systemowa] Poprzednia odpowiedź była pusta. Najpierw wywołaj narzędzia MCP "
-                        "(api_search, asset_search, game_read), aby zweryfikować fakty w grze, "
-                        "a potem odpowiedz tekstem."}
+                    pending_hint = {"role": "user", "content": HINT_EMPTY_NO_TOOLS}
                     continue
-                content = ("Model dwukrotnie zwrócił pustą odpowiedź i nie wykonał w tej turze żadnego "
-                           "odczytu MCP. Nie zgaduję odpowiedzi. Spróbuj ponownie albo zadaj pytanie krócej.")
+                content = MSG_EMPTY_TWICE
                 messages.append({"role": "assistant", "content": content})
                 compact_finished_history(messages)
                 phase("Brak odpowiedzi modelu")
@@ -1333,10 +855,7 @@ def _ask_impl(question: str, messages: list[dict], mcp: MCPStdioClient,
                 print(f"  [OLLAMA] Pusty wynik po użyciu MCP (reason={done_reason or '?'}) - ponowienie z niskim "
                       "rozumowaniem, bez narzędzi", flush=True)
                 phase("Model nie zwrócił tekstu - ponawiam z krótszym rozumowaniem")
-                retry_hint = {"role": "user", "content":
-                    "[Uwaga systemowa] Poprzednia generacja skończyła się bez tekstu odpowiedzi (zbyt długie "
-                    "rozumowanie). Napisz TERAZ końcową odpowiedź na pytanie użytkownika, w żądanym formacie, "
-                    "wyłącznie na podstawie wyników narzędzi powyżej. Nie wywołuj narzędzi i nie rozumuj długo."}
+                retry_hint = {"role": "user", "content": HINT_RETRY_AFTER_EMPTY}
                 retry = None
                 try:
                     retry = ollama_chat(messages + [retry_hint], [], model, num_ctx, think="low")
@@ -1371,11 +890,7 @@ def _ask_impl(question: str, messages: list[dict], mcp: MCPStdioClient,
                 # prosimy o krotka, pelna synteze dotychczasowych dowodow.
                 retry_messages = list(messages) + [
                     {"role": "assistant", "content": content},
-                    {"role": "user", "content":
-                        "Poprzednia odpowiedź urwała się w połowie. Podaj ponownie całą "
-                        "odpowiedź, tym razem zwięźle i kompletnie. Bez tabel. "
-                        "Wnioski opieraj jedynie na wynikach MCP z tej rozmowy. "
-                        "Jeśli nie masz wystarczających danych, napisz to wprost."},
+                    {"role": "user", "content": HINT_INCOMPLETE_RETRY},
                 ]
                 try:
                     again = ollama_chat(retry_messages, [], model, num_ctx)
@@ -1386,19 +901,33 @@ def _ask_impl(question: str, messages: list[dict], mcp: MCPStdioClient,
                             and not _is_incomplete_answer(again_content)):
                         content = again_content
                     else:
-                        content = (content or "[Brak odpowiedzi]") + "\n\n" + (
-                            "[Uwaga: Ollama zwróciła niepełną odpowiedź. "
-                            "Spróbuj doprecyzować pytanie lub zwiększyć dostępny kontekst.]"
-                        )
+                        content = (content or "[Brak odpowiedzi]") + "\n\n" + NOTE_INCOMPLETE
                 except (RuntimeError, MCPError, OSError) as exc:
                     print(f"  [OLLAMA] Ponowna synteza nieudana: {exc}", flush=True)
                     content = (content or "[Brak odpowiedzi]") + (
                         "\n\n[Uwaga: odpowiedź jest niepełna; ponowna próba się nie udała.]"
                     )
+            if API_CHECK_MODE != "off" and content:
+                try:
+                    problems = _api_problems(content, meta, session_files)
+                except Exception as exc:  # kontrola nigdy nie psuje odpowiedzi
+                    print(f"  [API] kontrola pominięta z powodu błędu: {exc!r}", flush=True)
+                    problems = []
+                if problems:
+                    print("  [API] niepotwierdzone: " + "; ".join(problems), flush=True)
+                    if API_CHECK_MODE == "fix" and api_fix_rounds < 1 and count < MAX_TOOL_CALLS:
+                        api_fix_rounds += 1
+                        phase("Sprawdzam nazwy API użyte w kodzie")
+                        pending_hint = {"role": "user", "content": HINT_API_FIX.format(problems="; ".join(problems))}
+                        continue          # szkic odrzucony: nie trafia do historii
+                    if API_CHECK_MODE == "fix":
+                        api_footer = _api_footer(problems)
+                elif api_fix_rounds:
+                    print("  [API] po rundzie poprawkowej wszystkie nazwy potwierdzone", flush=True)
             messages.append({"role": "assistant", "content": content})
             compact_finished_history(messages)
             phase("Odpowiedź gotowa")
-            return content or "[Model nie zwrócił odpowiedzi tekstowej]"
+            return (content or "[Model nie zwrócił odpowiedzi tekstowej]") + api_footer
 
         if failed_rounds >= 4 or tool_rounds > MAX_TOOL_CALLS + 6:
             stop_cause = ("seria rund bez nowych danych" if failed_rounds >= 4
@@ -1472,12 +1001,10 @@ def _ask_impl(question: str, messages: list[dict], mcp: MCPStdioClient,
                             response = "[powtórzony odczyt - pełny wynik z pamięci podręcznej]\n" + cached
                         elif intact and dup_counts[signature] <= 1:
                             print(f"  [DUP] {name} {json.dumps(arguments, ensure_ascii=False)} -> wynik już w kontekście", flush=True)
-                            response = ("Ten wynik już masz w kontekście (wyżej w rozmowie) - nie powtarzaj tego wywołania. "
-                                        + ledger + " Wykonaj NOWY krok albo napisz odpowiedź.")
+                            response = TOOL_DUP_IN_CONTEXT.format(ledger=ledger)
                         else:
                             print(f"  [DUP] {name} {json.dumps(arguments, ensure_ascii=False)} -> zablokowano (powtórka nr {dup_counts[signature]})", flush=True)
-                            response = ("BŁĄD: identyczne wywołanie zostało już wykonane w tej turze. " + ledger
-                                        + " Wybierz inny krok (np. asset_search po nazwie pliku) albo podsumuj wyniki.")
+                            response = TOOL_DUP_BLOCKED.format(ledger=ledger)
                     elif view and base_signature in full_cache:
                         # Plik już pobrany w tej turze: widok liczymy lokalnie, bez wywołania MCP i bez zużycia limitu.
                         seen_calls.add(signature)
@@ -1485,9 +1012,7 @@ def _ask_impl(question: str, messages: list[dict], mcp: MCPStdioClient,
                         view_counts[vkey] = view_counts.get(vkey, 0) + 1
                         if view_counts[vkey] > VIEW_LIMIT_PER_FILE:
                             print(f"  [VIEW] {arguments.get('path', '')} -> limit {VIEW_LIMIT_PER_FILE} widoków tego pliku", flush=True)
-                            response = (f"BŁĄD: limit {VIEW_LIMIT_PER_FILE} lokalnych widoków tego pliku w jednej turze. "
-                                        + _ledger(read_paths, searches, misses)
-                                        + " Zmień strategię albo napisz odpowiedź z tego, co masz.")
+                            response = TOOL_VIEW_LIMIT.format(limit=VIEW_LIMIT_PER_FILE, ledger=_ledger(read_paths, searches, misses))
                         else:
                             response, view_found = _render_view(full_cache[base_signature], view)
                             print(f"  [VIEW] {arguments.get('path', '')} {_view_label(view)} -> {len(response)} zn. "
@@ -1502,7 +1027,7 @@ def _ask_impl(question: str, messages: list[dict], mcp: MCPStdioClient,
                         if notes:
                             response += "\n[korekta wywołania: " + "; ".join(notes) + "]"
                     elif count >= MAX_TOOL_CALLS:
-                        response = "BŁĄD: osiągnięto limit wywołań MCP. Odpowiedz tylko na podstawie dotąd otrzymanych wyników."
+                        response = TOOL_MCP_LIMIT
                     else:
                         seen_calls.add(signature)
                         count += 1
@@ -1520,6 +1045,8 @@ def _ask_impl(question: str, messages: list[dict], mcp: MCPStdioClient,
                                 result, raw = second, _raw_text(second)
                                 notes.append(f"użyto tytułu z wywołania modelu: {model_title!r}")
                                 print(f"  [REPAIR] wiki_read: znormalizowany tytuł nie istnieje; użyto {model_title!r}", flush=True)
+                        if not is_error:
+                            _add_evidence(meta, raw)
                         view_found = True
                         if name == "game_read" and not is_error:
                             full_cache[base_signature] = raw
@@ -1533,9 +1060,7 @@ def _ask_impl(question: str, messages: list[dict], mcp: MCPStdioClient,
                         else:
                             response = tool_text(result, name, arguments)
                             if name == "game_read" and not is_error and len(raw) > MAX_TOOL_RESULT_CHARS:
-                                response += (f"\n[Plik ma {len(raw)} znaków; w kontekście jest skrót. Użyj game_read z "
-                                             "parametrem query (szukanie w CAŁYM pliku) albo line_start/line_end, "
-                                             "zamiast zgadywać, co jest w pominiętej części.]")
+                                response += TOOL_FILE_SHORTENED.format(chars=len(raw))
                         if is_error:
                             # Wyjaśnij walidację z rzeczywistego schematu BK.
                             response += "\n" + tool_schema_hint(mcp.tools, name)
@@ -1582,13 +1107,7 @@ def _ask_impl(question: str, messages: list[dict], mcp: MCPStdioClient,
         if failed_rounds == 2:
             # Przełamanie zastoju: rundy bez nowych danych. Jednorazowa podpowiedź (nie trafia do historii).
             print("  [STALL] 2 rundy bez nowych danych - podpowiedź z rejestrem", flush=True)
-            pending_hint = {"role": "user", "content":
-                "[Uwaga systemowa] Ostatnie wywołania nie dały nowych danych (powtarzasz te same). "
-                + _ledger(read_paths, searches, misses)
-                + " Nie powtarzaj ich i nie zgaduj kolejnych nazw. Jeśli brakuje Ci pliku, znajdź jego ścieżkę "
-                  "przez asset_search (nazwa pliku; type=script dla klas, type=prefab dla prefabów). "
-                  "Dla nazwy metody lub pola użyj api_search z type=method. Jeśli po 2-3 różnych zapisach "
-                  "nazwy nie ma, napisz, że nie znaleziono. Jeśli masz już dość danych, napisz odpowiedź."}
+            pending_hint = {"role": "user", "content": HINT_STALL.format(ledger=_ledger(read_paths, searches, misses))}
         if count >= MAX_TOOL_CALLS:
             # Nie zostawiaj w historii trwałego systemowego zakazu narzędzi!
             # Wcześniej taka wiadomość mogła zatruwać następną turę rozmowy.

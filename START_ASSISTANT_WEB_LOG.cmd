@@ -16,7 +16,7 @@ if errorlevel 1 (
     exit /b 1
 )
 
-for %%F in (reforger_assistant_WEB.py reforger_assistant_MCP_BK.py reforger_helpers.py assistant.html) do (
+for %%F in (reforger_assistant_WEB.py reforger_assistant_MCP_BK.py reforger_helpers.py reforger_config.py reforger_prompts.py reforger_rules.py reforger_checks.py reforger_mcp.py assistant.html) do (
     if not exist "%%F" (
         echo.
         echo BLAD: obok tego pliku nie ma pliku %%F

@@ -29,6 +29,19 @@
   --red: #f08a3c;
 
   --radius: 13px;
+
+a:link, a:visited {
+  color: #c89b6d;
+  background-color: transparent;
+  text-decoration: none;
+}
+
+a:hover, a:active {
+  color: #c89b6d;
+  background-color: transparent;
+  text-decoration: underline;
+}
+
 }
     *{box-sizing:border-box} html,body{margin:0;height:100%;font-family:Inter,ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif;background:var(--bg);color:var(--text)} button,input,textarea{font:inherit} button{cursor:pointer} button:disabled{cursor:default;opacity:.45} ::selection{background:#4777a76e}
     #app{display:grid;grid-template-columns:255px minmax(0,1fr) 305px;height:100dvh;overflow:hidden}
@@ -226,7 +239,7 @@
     <div class="search-wrap"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m16 16 5 5"/></svg><input id="search" autocomplete="off" placeholder="Szukaj rozmów..." aria-label="Szukaj rozmów"></div>
     <div class="side-label">Historia rozmów</div>
     <div id="sessionList" class="session-list"></div>
-    <div class="side-footer"><div class="footer-row"><span class="status-dot"></span><span id="connectionText">Łączenie z MCP BK...</span></div><div class="small-note">Stan połączenia z serwerem MCP<br><br>v1.5.3 - KUKA</div></div>
+    <div class="side-footer"><div class="footer-row"><span class="status-dot"></span><span id="connectionText">Łączenie z MCP BK...</span></div><div class="small-note">Stan połączenia z serwerem MCP<br><br>v1.5.3 - <a href="https://github.com/kuka42" target="_new">KUKA</a></div></div>
   </aside>
   <main class="main">
     <header class="topbar"><div class="top-left"><button class="icon-button only-mobile" id="toggleSidebar" aria-label="Pokaż historię">☰</button><div style="min-width:0"><div class="top-title" id="currentTitle">Nowa rozmowa</div><div class="top-subtitle" id="modelLine">GPT-OSS · Ollama</div></div></div><div class="top-right"><div class="cfg-wrap"><button type="button" class="cfg-pill" id="modelPill" aria-haspopup="listbox" aria-expanded="false" aria-controls="modelMenu" title="Wybierz model Ollamy"><span class="cfg-label">model</span><span class="cfg-value" id="modelValue">…</span><span class="cfg-caret" aria-hidden="true">▾</span></button><div class="cfg-menu" id="modelMenu" role="listbox" aria-label="Model Ollamy" hidden></div></div><div class="cfg-wrap"><button type="button" class="cfg-pill" id="ctxPill" aria-haspopup="listbox" aria-expanded="false" aria-controls="ctxMenu" title="Wybierz rozmiar kontekstu"><span class="cfg-label">kontekst</span><span class="cfg-value" id="ctxValue">…</span><span class="cfg-caret" aria-hidden="true">▾</span></button><div class="cfg-menu" id="ctxMenu" role="listbox" aria-label="Rozmiar kontekstu" hidden></div></div><span class="pill">● LOCAL ONLY</span><button class="icon-button only-mobile" id="toggleTools" aria-label="Pokaż aktywność MCP" title="Aktywność MCP">⚙</button></div></header>
@@ -426,7 +439,7 @@
   function renderChat(){
     const root=$('chatContent');root.replaceChildren();const turns=state.detail?.turns||[];
     $('currentTitle').textContent=state.detail?.title||'Nowa rozmowa';
-    if(!turns.length){const welcome=document.createElement('section');welcome.className='welcome';welcome.innerHTML=`<div class="welcome-symbol">R</div><h1>Co dziś tworzymy w Reforgerze?</h1><p>Twój lokalny asystent z dostępem do prawdziwego API i skryptów gry przez Enfusion MCP BK. Bez OpenCode, bez kopiowania zasobów gry.</p><div class="suggestions"><button class="suggestion" data-example="Znajdź skrypty odpowiedzialne za zużycie paliwa w pojazdach i wyjaśnij ich działanie."><strong>Zużycie paliwa</strong><span>Sprawdź mechanikę pojazdów w kodzie gry</span></button><button class="suggestion" data-example="Znajdź mechanizm zadawania obrażeń pojazdom. Pokaż rzeczywiste klasy i skrypty."><strong>System obrażeń</strong><span>Wyszukaj komponenty i powiązane API</span></button><button class="suggestion" data-example="Wyjaśnij, jak w Arma Reforger działają zdarzenia GameMode, na podstawie rzeczywistego kodu."><strong>GameMode</strong><span>Zrozum zdarzenia i cykl życia trybu</span></button><button class="suggestion" data-example="Znajdź skrypty związane z ekwipunkiem gracza i wskaż najważniejsze klasy."><strong>Ekwipunek</strong><span>Odkryj istniejące komponenty i metody</span></button></div>`;
+    if(!turns.length){const welcome=document.createElement('section');welcome.className='welcome';welcome.innerHTML=`<div class="welcome-symbol">R</div><h1>Co dziś tworzymy w Reforgerze?</h1><p>Twój lokalny asystent z dostępem do prawdziwego API i skryptów gry przez Enfusion MCP BK. Napisana w Pythonie aplikacja integruje modele <a href="https://ollama.com" target="_new">Ollama</a> z serwerem MCP, oferując przy tym intuicyjny interfejs GUI.</p><div class="suggestions"><button class="suggestion" data-example="Znajdź skrypty odpowiedzialne za zużycie paliwa w pojazdach i wyjaśnij ich działanie."><strong>Zużycie paliwa</strong><span>Sprawdź mechanikę pojazdów w kodzie gry</span></button><button class="suggestion" data-example="Znajdź mechanizm zadawania obrażeń pojazdom. Pokaż rzeczywiste klasy i skrypty."><strong>System obrażeń</strong><span>Wyszukaj komponenty i powiązane API</span></button><button class="suggestion" data-example="Wyjaśnij, jak w Arma Reforger działają zdarzenia GameMode, na podstawie rzeczywistego kodu."><strong>GameMode</strong><span>Zrozum zdarzenia i cykl życia trybu</span></button><button class="suggestion" data-example="Znajdź skrypty związane z ekwipunkiem gracza i wskaż najważniejsze klasy."><strong>Ekwipunek</strong><span>Odkryj istniejące komponenty i metody</span></button></div>`;
       welcome.querySelectorAll('[data-example]').forEach(b=>b.addEventListener('click',()=>{$('prompt').value=b.dataset.example;autoGrow();$('prompt').focus();}));root.append(welcome);}
     for(const turn of turns){
       const msg=document.createElement('div');msg.className='message '+(turn.role==='user'?'user':'assistant');
