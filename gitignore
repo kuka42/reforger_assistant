@@ -1,0 +1,22 @@
+# Dane lokalne: rozmowy (zawierają pytania i przytoczony kod gry), ustawienia, logi
+assistant_web_data/
+logs/
+
+# Wyniki i logi robocze z testów
+wyniki*.md
+log*.txt
+conversations*.json
+
+# Python
+__pycache__/
+*.pyc
+
+# Serwer MCP ma własne repozytorium i własną licencję: nie dołączamy go tutaj
+enfusion-mcp-BK/
+node_modules/
+
+# Edytory i system
+.vscode/
+.idea/
+Thumbs.db
+desktop.ini

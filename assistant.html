@@ -1,0 +1,480 @@
+
+<!doctype html>
+<html lang="pl">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="color-scheme" content="dark" />
+  <meta name="author" content="kuka">
+  <title>Reforger Assistant · Local MCP</title>
+  <link rel="author" href="https://github.com/kuka42">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%23f19349'/%3E%3Ctext x='32' y='45' font-family='Arial' font-size='40' font-weight='800' text-anchor='middle' fill='%2326170c'%3ER%3C/text%3E%3C/svg%3E">
+  <style>
+:root {
+  color-scheme: dark;
+
+  --bg: #0f0f0f;
+  --panel: #171717;
+  --panel2: #1d1d1d;
+  --hover: #262626;
+  --border: #343434;
+
+  --muted: #a1a1a1;
+  --text: #f2f2f2;
+
+  --blue: #f0a35a;
+  --blue2: #e8892e;
+
+  --green: #c89b6d;
+  --red: #f08a3c;
+
+  --radius: 13px;
+}
+    *{box-sizing:border-box} html,body{margin:0;height:100%;font-family:Inter,ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif;background:var(--bg);color:var(--text)} button,input,textarea{font:inherit} button{cursor:pointer} button:disabled{cursor:default;opacity:.45} ::selection{background:#4777a76e}
+    #app{display:grid;grid-template-columns:255px minmax(0,1fr) 305px;height:100dvh;overflow:hidden}
+    .sidebar,.tools-panel{background:var(--panel);height:100%;min-height:0;display:flex;flex-direction:column}
+    .sidebar{border-right:1px solid var(--border);padding:17px 12px}
+    .tools-panel{border-left:1px solid var(--border);padding:20px 16px}
+    .brand{display:flex;align-items:center;gap:11px;padding:2px 10px 23px}.brandmark{display:grid;place-items:center;width:37px;height:37px;border-radius:12px;background:linear-gradient(135deg,#6096e7,#2c4771);box-shadow:0 6px 24px #3e6cb837;font-size:20px;font-weight:900;letter-spacing:-1px}.brand-text{font-weight:760;font-size:14px;letter-spacing:.01em}.brand-sub{font-size:11px;color:var(--muted);margin-top:3px}
+    .side-primary{border:1px solid #3a4960;background:#1a293e;color:#deebff;border-radius:10px;padding:12px 13px;text-align:left;font-weight:640;display:flex;align-items:center;justify-content:space-between;transition:background .15s}.side-primary:hover{background:#263b58}.plus{font-size:21px;font-weight:400;line-height:1}
+    .search-wrap{position:relative;margin:15px 0 12px}.search-wrap input{width:100%;padding:10px 10px 10px 32px;border:1px solid #242b38;border-radius:9px;background:#0d1016;color:var(--text);outline:none;font-size:12px}.search-wrap input:focus{border-color:#5376a8}.search-wrap svg{position:absolute;left:11px;top:12px;color:var(--muted)}
+    .side-label{font-size:10px;font-weight:750;text-transform:uppercase;letter-spacing:.12em;color:#67778f;padding:12px 10px 9px}.session-list{overflow-y:auto;min-height:0;flex:1;scrollbar-width:thin;scrollbar-color:#283341 transparent}.session{display:flex;align-items:center;min-height:43px;gap:4px;padding:2px 5px 2px 11px;border-radius:9px;color:#aeb9cd;transition:background .15s}.session:hover{background:var(--hover)}.session.selected{background:#202b3d;color:#f3f6ff}.session-title{background:none;border:0;color:inherit;flex:1;text-align:left;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;padding:11px 0;font-size:12px;min-width:0}.session-delete{border:0;background:transparent;color:#8793a9;font-size:16px;border-radius:6px;width:23px;height:27px;opacity:0}.session:hover .session-delete{opacity:1}.session-delete:hover{background:#4b2529;color:#ffc6c4}.session.selected .session-delete{opacity:.65}
+    .side-footer{border-top:1px solid var(--border);padding:16px 10px 3px}.footer-row{display:flex;gap:8px;align-items:center;color:#8292a8;font-size:11px;padding-bottom:8px}.status-dot{width:7px;height:7px;border-radius:50%;background:var(--green);box-shadow:0 0 9px #6bd7b377;flex:none}.small-note{font-size:10px;color:#627085;line-height:1.6}
+    .main{display:flex;flex-direction:column;min-width:0;min-height:0;background:radial-gradient(circle at 55% -18%,#1b264021,transparent 55%),var(--bg)}
+    .topbar{height:65px;flex:none;border-bottom:1px solid #1b202b;padding:0 27px;display:flex;align-items:center;justify-content:space-between;gap:12px}.top-left{display:flex;align-items:center;gap:12px;min-width:0}.top-title{font-size:13px;font-weight:650;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}.top-subtitle{font-size:11px;color:#6e7e93;padding-top:3px}.top-right{display:flex;gap:9px;align-items:center}.pill{border:1px solid #29433d;background:#12251f;color:var(--green);border-radius:20px;font-size:10px;padding:6px 10px;font-weight:700;letter-spacing:.02em}.icon-button{display:grid;place-items:center;background:transparent;border:1px solid transparent;border-radius:9px;width:35px;height:35px;color:#9aa9be}.icon-button:hover{border-color:var(--border);background:var(--hover);color:var(--text)}.only-mobile{display:none}
+    .chat-scroll{flex:1;overflow-y:auto;min-height:0;scrollbar-width:thin;scrollbar-color:#283341 transparent}.chat-inner{max-width:850px;margin:0 auto;min-height:100%;padding:34px 43px 24px}
+    .welcome{height:100%;min-height:490px;display:flex;flex-direction:column;justify-content:center;align-items:flex-start;max-width:650px;margin:auto;padding-bottom:45px}.welcome-symbol{display:grid;place-items:center;width:58px;height:58px;border-radius:18px;background:linear-gradient(150deg,#2b4771,#131c2c);border:1px solid #3b5177;color:#b3d2ff;font-size:27px;font-weight:750;box-shadow:0 18px 35px #0004}.welcome h1{margin:21px 0 9px;font-size:29px;letter-spacing:-.04em;line-height:1.15;font-weight:790}.welcome p{margin:0 0 30px;color:#92a0b5;font-size:14px;line-height:1.75;max-width:510px}.suggestions{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;width:100%}.suggestion{background:#141a24;color:#bccae0;border:1px solid #293346;border-radius:12px;padding:16px;text-align:left;min-height:83px;line-height:1.4;font-size:12px}.suggestion:hover{background:#1d293b;border-color:#47628b}.suggestion strong{display:block;color:#ebf2ff;font-size:12px;margin-bottom:5px}.suggestion span{color:#7d8da5}
+    .message{margin-bottom:28px}.message.user{display:flex;justify-content:flex-end}.bubble-user{max-width:min(85%,710px);padding:13px 17px;background:#233147;color:#f1f6ff;border:1px solid #35465e;border-radius:17px 17px 4px 17px;font-size:13px;line-height:1.75;white-space:pre-wrap;overflow-wrap:anywhere}.assistant-message{display:flex;align-items:flex-start;gap:14px}.avatar{flex:none;display:grid;place-items:center;width:30px;height:30px;border-radius:10px;background:#1e3551;border:1px solid #3d5c85;color:#b9d4ff;font-weight:800;font-size:12px}.assistant-body{min-width:0;flex:1;font-size:13px;line-height:1.85;color:#d6dfec;overflow-wrap:anywhere}.assistant-body p{margin:0 0 14px}.assistant-body h1,.assistant-body h2,.assistant-body h3{color:#f4f7fc;line-height:1.4;letter-spacing:-.015em;margin:17px 0 10px}.assistant-body h1{font-size:21px}.assistant-body h2{font-size:17px}.assistant-body h3{font-size:14px}.assistant-body ul,.assistant-body ol{padding-left:20px;margin:0 0 16px}.assistant-body li{margin:3px 0}.assistant-body strong{color:#eef5ff}.assistant-body code{background:#202938;padding:2px 5px;color:#a9d2ff;border:1px solid #2b3b52;border-radius:5px;font:12px/1.7 ui-monospace,"Cascadia Code",Consolas,monospace}.code-wrap{margin:12px 0 18px;border:1px solid #293449;border-radius:10px;overflow:hidden;background:#0c1017}.code-head{display:flex;justify-content:space-between;align-items:center;padding:7px 13px;background:#18202d;color:#8094ae;font-size:10px}.code-head button{border:0;background:transparent;color:#a8bdd7;font-size:10px}.code-head button:hover{color:white}.code-wrap pre{overflow:auto;padding:12px 15px;margin:0;line-height:1.6}.code-wrap pre code{background:none;border:0;padding:0;color:#d5e8ff;font-size:12px}.assistant-body table{border-collapse:collapse;display:block;max-width:100%;overflow:auto;margin:12px 0 19px;font-size:12px}.assistant-body th,.assistant-body td{border:1px solid #334057;padding:8px 10px;text-align:left}.assistant-body th{background:#1b2534;color:#e5edfa;font-weight:680}.assistant-body td{background:#121923}.assistant-body blockquote{border-left:3px solid #4d7bbc;padding:2px 0 2px 14px;margin:13px 0;color:#a3b3c9}.msg-actions{margin-top:9px}.copy-answer{background:transparent;border:0;padding:3px 7px 3px 0;color:#71819a;font-size:11px}.copy-answer:hover{color:#c5ddfb}
+    .thinking{display:flex;gap:14px;align-items:center;color:#91a5c0;font-size:12px}.dots{display:inline-flex;gap:5px}.dots b{width:5px;height:5px;border-radius:50%;background:#93b7e8;animation:pulse 1.2s infinite alternate}.dots b:nth-child(2){animation-delay:.2s}.dots b:nth-child(3){animation-delay:.4s}@keyframes pulse{to{opacity:.18;transform:translateY(-3px)}}
+    .composer-area{flex:none;padding:10px 38px 23px;background:linear-gradient(0deg,#0a0c11 70%,transparent)}.composer{max-width:850px;margin:0 auto;background:#161c26;border:1px solid #334058;border-radius:17px;padding:12px 12px 9px 17px;box-shadow:0 10px 32px #0003}.composer:focus-within{border-color:#5077aa}.composer textarea{background:transparent;border:0;outline:0;color:#e8eef9;width:100%;resize:none;min-height:50px;max-height:185px;padding:4px 4px 5px 0;line-height:1.6;font-size:13px;display:block;overflow-y:auto}.composer textarea::placeholder{color:#7b8ba1}.composer-footer{display:flex;justify-content:space-between;align-items:center;gap:10px}.composer-hint{font-size:10px;color:#697a93}.send-button{display:flex;align-items:center;justify-content:center;gap:8px;padding:9px 14px;color:#102039;background:#91bbf7;border:0;border-radius:9px;font-weight:760;font-size:12px}.send-button:hover:not(:disabled){background:#bad7ff}.below-composer{max-width:850px;margin:9px auto 0;text-align:center;color:#536277;font-size:10px}
+    .right-top{display:flex;align-items:center;justify-content:space-between;padding:2px 4px 13px}.right-title{font-size:13px;font-weight:750}.right-sub{font-size:11px;color:#728399;margin:3px 4px 19px}.panel-section{color:#6d7e93;font-size:10px;font-weight:760;letter-spacing:.12em;text-transform:uppercase;margin:10px 4px 12px}.tool-list{flex:1;min-height:0;overflow:auto;padding:0 2px;scrollbar-width:thin}.tool-row{position:relative;border-left:1px solid #344052;margin-left:11px;padding:0 0 15px 21px}.tool-row:last-child{border-color:transparent}.tool-row:before{content:'';position:absolute;left:-5px;top:2px;width:9px;height:9px;border:2px solid #142036;border-radius:50%;background:var(--blue)}.tool-row.error:before{background:#e77c77}.tool-row.running:before{background:#f0c077;box-shadow:0 0 12px #ffc87755}.tool-name{font-size:11px;color:#d3e2f8;font-weight:700;word-break:break-all}.tool-desc{font-size:10px;color:#8394ae;margin-top:4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.tool-meta{font-size:10px;margin-top:4px;color:#65778e}.tool-args{margin-top:6px;background:#0c1017;border:1px solid #202b3d;padding:8px;border-radius:7px;color:#8b9bb1;overflow:auto;white-space:pre-wrap;word-break:break-word;font:10px/1.55 ui-monospace,Consolas,monospace;max-height:140px}.no-traces{color:#74859d;font-size:12px;line-height:1.8;padding:6px 6px 20px}.right-footer{border-top:1px solid #253042;padding-top:17px;font-size:11px;color:#7d90a8;line-height:1.65}.mode-tag{display:inline-block;padding:5px 9px;border-radius:7px;border:1px solid #294639;background:#16261f;color:#81d9b4;font-size:10px;font-weight:680;margin-bottom:8px}
+    .toast{position:fixed;bottom:25px;left:50%;transform:translateX(-50%);background:#28364a;border:1px solid #4d6280;color:#e4efff;padding:11px 16px;border-radius:10px;box-shadow:0 8px 40px #0008;font-size:12px;z-index:20;max-width:90vw}
+    @media(max-width:1200px){#app{grid-template-columns:235px minmax(0,1fr)}.tools-panel{position:fixed;right:0;top:0;width:305px;z-index:11;transform:translateX(100%);transition:transform .2s;box-shadow:-20px 0 40px #0007}.tools-panel.open{transform:none}.only-mobile{display:grid}.chat-inner{padding:28px 27px}.composer-area{padding:10px 25px 21px}}
+    @media(max-width:700px){#app{display:block}.sidebar{position:fixed;left:0;top:0;width:270px;z-index:12;transform:translateX(-100%);transition:transform .2s;box-shadow:20px 0 40px #0007}.sidebar.open{transform:none}.main{height:100dvh}.topbar{padding:0 13px;height:58px}.chat-inner{padding:20px 16px}.composer-area{padding:10px 13px 16px}.welcome{min-height:420px;padding:0 2px}.welcome h1{font-size:24px}.suggestions{grid-template-columns:1fr}.suggestion{min-height:63px;padding:12px}.pill{display:none}.top-title{max-width:190px}.right-top{padding-top:9px}}
+  
+
+    /* ==============================================================
+       MOTYW: GRAPHITE / ORANGE
+       Celowo na końcu sekcji <style>: nadpisuje oryginalne kolory
+       wpisane bezpośrednio w selektorach (które omijały :root).
+       =============================================================== */
+    :root {
+      color-scheme: dark;
+      --bg: #0d0e0f;
+      --panel: #151617;
+      --panel2: #1d1e20;
+      --hover: #29292b;
+      --border: #323334;
+      --muted: #a0a2a4;
+      --text: #eeeded;
+      --blue: #f19349;
+      --blue2: #dd7430;
+      --accent: #f19349;
+      --accent-hover: #ffab66;
+      --accent-soft: #34251b;
+      --accent-border: #6c4430;
+      --green: #7cccac;
+      --red: #e98780;
+      --radius: 13px;
+    }
+    ::selection { background: #d8793c66; }
+
+    /* Układ i nawigacja */
+    .main { background: radial-gradient(circle at 55% -18%, #f1934909, transparent 55%), var(--bg); }
+    .sidebar, .tools-panel { background: var(--panel); }
+    .brandmark {
+      background: linear-gradient(135deg, #ee974f, #b65e2c);
+      box-shadow: 0 6px 24px #dd74302b;
+      color: #1c130c;
+    }
+    .side-primary {
+      border-color: #b66a3a;
+      background: #a9592c;
+      color: #fff4e9;
+    }
+    .side-primary:hover { background: #b0602f; color: #ffffff; }
+    .search-wrap input { background: #111213; border-color: var(--border); }
+    .search-wrap input:focus { border-color: var(--accent); }
+    .side-label, .panel-section { color: #8d8f92; }
+    .session-list { scrollbar-color: #414143 transparent; }
+    .session { color: #bebfc2; }
+    .session.selected { background: #30241d; color: #fff0e6; }
+    .session-delete { color: #a1a2a5; }
+    .session-delete:hover { background: #422222; color: #ffb2ab; }
+    .footer-row, .small-note { color: #97999c; }
+    .status-dot { background: var(--green); box-shadow: 0 0 9px #7cccac4d; }
+    .topbar { border-bottom-color: var(--border); }
+    .top-subtitle, .right-sub { color: #98999c; }
+    .pill { border-color: #355748; background: #1a2923; color: var(--green); }
+    .icon-button { color: #b2b3b5; }
+    .chat-scroll { scrollbar-color: #414143 transparent; }
+
+    /* Ekran powitalny i propozycje */
+    .welcome-symbol {
+      background: linear-gradient(150deg, #553523, #261d17);
+      border-color: #855038;
+      color: #ffb17b;
+    }
+    .welcome p { color: #b1b1b4; }
+    .suggestion { background: #1b1c1d; color: #c2c3c5; border-color: var(--border); }
+    .suggestion:hover { background: #29231f; border-color: var(--accent-border); }
+    .suggestion strong { color: #f1f1f1; }
+    .suggestion span { color: #a0a2a4; }
+
+    /* Rozmowa i formatowanie kodu */
+    .bubble-user { background: #2f261f; color: #f2eeee; border-color: #604735; }
+    .avatar { background: #31231a; border-color: #6d472f; color: #ffb680; }
+    .assistant-body { color: #dadadc; }
+    .assistant-body h1, .assistant-body h2, .assistant-body h3,
+    .assistant-body strong { color: #f3f1ef; }
+    .assistant-body code {
+      background: #2a251f; color: #ffb984;
+      border-color: #584030;
+    }
+    .code-wrap { background: #111213; border-color: #353536; }
+    .code-head { background: #202022; color: #b3b4b7; }
+    .code-head button { color: #f3a46b; }
+    .code-head button:hover { color: #ffd0ac; }
+    .code-wrap pre code { background: transparent; border: 0; color: #e7e4e1; }
+    .assistant-body th, .assistant-body td { border-color: #424244; }
+    .assistant-body th { background: #252526; color: #f1efed; }
+    .assistant-body td { background: #1a1b1c; }
+    .assistant-body blockquote { border-left-color: var(--accent); color: #bababc; }
+    .copy-answer { color: #a0a1a4; }
+    .copy-answer:hover { color: #ffb27b; }
+    .thinking { color: #bdbdbf; }
+    .dots b { background: var(--accent); }
+
+    /* Edytor wiadomości i przycisk Wyślij */
+    .composer-area { background: linear-gradient(0deg, var(--bg) 70%, transparent); }
+    .composer { background: #202123; border-color: #484544; }
+    .composer:focus-within { border-color: var(--accent); }
+    .composer textarea { color: var(--text); }
+    .composer textarea::placeholder { color: #a0a0a3; }
+    .composer-hint { color: #939497; }
+    .send-button { color: #26170c; background: var(--accent); }
+    .send-button:hover:not(:disabled) { background: var(--accent-hover); }
+    .below-composer { color: #838487; }
+
+    /* Podgląd MCP i komunikaty */
+    .panel-section { color: #8e8f91; }
+    .tool-row { border-left-color: #454547; }
+    .tool-row:before { border-color: var(--panel); background: var(--accent); }
+    .tool-row.error:before { background: #e53935; }
+    .tool-row.running:before { background: #9a9a9a; box-shadow: 0 0 12px #9a9a9a55; }
+    .tool-name { color: #eeeeef; }
+    .tool-desc { color: #b2b3b5; }
+    .tool-meta { color: #909194; }
+    .tool-args { background: #111213; border-color: #383839; color: #c0bdbb; }
+    .no-traces { color: #a1a2a5; }
+    .right-footer { border-top-color: var(--border); color: #a4a4a6; }
+    .mode-tag { border-color: #3e634f; background: #1b2d23; color: var(--green); }
+    .toast { background: #292521; border-color: #6e4b34; color: #f4ece5; }
+    .assistant-body hr { border: 0; border-top: 1px solid var(--border); margin: 18px 0; }
+    .assistant-body em { color: #bdbdc0; }
+    .assistant-body li > ul, .assistant-body li > ol { margin: 4px 0 4px; }
+
+    /* Wybór modelu i kontekstu: pigułki w górnym pasku (kolory z makiety: wypełnienie #da9563, czarny tekst, obwódka jak w .pill) */
+    .top-right { gap: 10px; flex: none; }
+    .top-left { flex: 1 1 0; }
+    .cfg-wrap { position: relative; }
+    .cfg-pill { display: inline-flex; align-items: center; gap: 7px; height: 28px; max-width: 270px; padding: 0 13px 0 14px; border: 1px solid #b66a3a; border-radius: 20px; background: #202123; color: #fff4e9; font-size: 12px; font-weight: 600; letter-spacing: .01em; white-space: nowrap; transition: background .15s; }
+    .cfg-pill:hover { background: #a9592c; }
+    .cfg-pill[aria-expanded="true"] { background: #a9592c; }
+    .cfg-pill:focus-visible { outline: 2px solid #ffd0ac; outline-offset: 2px; }
+    .cfg-label { font-weight: 500; opacity: 1; }
+    .cfg-value { font-weight: 750; overflow: hidden; text-overflow: ellipsis; max-width: 160px; }
+    .cfg-caret { font-size: 10px; opacity: .8; }
+    .cfg-menu { position: absolute; top: calc(100% + 8px); right: 0; z-index: 15; min-width: 290px; max-width: min(400px, 92vw); max-height: min(62vh, 440px); overflow: auto; padding: 6px; background: var(--panel); border: 1px solid var(--border); border-radius: 12px; box-shadow: 0 18px 50px #000a; scrollbar-width: thin; scrollbar-color: #414143 transparent; }
+    .cfg-menu[hidden] { display: none; }
+    .cfg-title { font-size: 10px; font-weight: 760; letter-spacing: .12em; text-transform: uppercase; color: #8e8f91; padding: 8px 11px 6px; }
+    .cfg-item { display: flex; align-items: center; justify-content: space-between; gap: 14px; width: 100%; padding: 9px 11px; border: 0; border-radius: 8px; background: none; color: #dadadc; font-size: 12px; text-align: left; }
+    .cfg-item:hover:not(:disabled), .cfg-item:focus-visible { background: var(--hover); outline: none; }
+    .cfg-item[aria-selected="true"] { background: #30241d; color: #fff0e6; }
+    .cfg-item:disabled { opacity: .55; cursor: default; }
+    .cfg-main { font-weight: 650; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .cfg-meta { color: #a0a2a4; font-size: 11px; white-space: nowrap; }
+    .cfg-item[aria-selected="true"] .cfg-meta { color: #d9c2b2; }
+    .cfg-warn { color: #ffb2ab; }
+    .cfg-note { padding: 8px 11px 6px; font-size: 11px; line-height: 1.55; color: #a0a2a4; }
+    .cfg-custom { display: flex; gap: 8px; align-items: center; margin-top: 6px; padding: 10px 11px 4px; border-top: 1px solid var(--border); }
+    .cfg-custom label { font-size: 11px; color: #a0a2a4; white-space: nowrap; }
+    .cfg-custom input { flex: 1; min-width: 0; padding: 8px 10px; background: #111213; border: 1px solid var(--border); border-radius: 8px; color: var(--text); font-size: 12px; }
+    .cfg-custom input:focus { outline: none; border-color: var(--accent); }
+    .cfg-custom button { padding: 8px 12px; border: 0; border-radius: 8px; background: var(--accent); color: #26170c; font-weight: 700; font-size: 12px; }
+    .cfg-custom button:hover { background: var(--accent-hover); }
+    .cfg-error { padding: 2px 11px 6px; font-size: 11px; color: #ffb2ab; }
+    @media (max-width: 700px) {
+      .top-right { gap: 6px; }
+      .top-title { max-width: none; }
+      .top-subtitle { display: none; }   /* model i kontekst są w pigułkach */
+      .cfg-label { display: none; }
+      .cfg-pill { padding: 0 11px; gap: 5px; }
+      .cfg-value { max-width: 88px; }
+      .cfg-wrap { position: static; }
+      .cfg-menu { position: fixed; left: 12px; right: 12px; top: 62px; min-width: 0; max-width: none; }
+    }
+    .tool-row.done::before { background: #35c98b; }
+
+  </style>
+</head>
+<body>
+<div id="app">
+  <aside class="sidebar" id="sidebar">
+    <div class="brand"><div class="brandmark">R</div><div><div class="brand-text">REFORGER ASSISTANT</div><div class="brand-sub">LOCAL OLLAMA · MCP BK</div></div></div>
+    <button class="side-primary" id="newChat"><span>Nowa rozmowa</span><span class="plus">+</span></button>
+    <div class="search-wrap"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m16 16 5 5"/></svg><input id="search" autocomplete="off" placeholder="Szukaj rozmów..." aria-label="Szukaj rozmów"></div>
+    <div class="side-label">Historia rozmów</div>
+    <div id="sessionList" class="session-list"></div>
+    <div class="side-footer"><div class="footer-row"><span class="status-dot"></span><span id="connectionText">Łączenie z MCP BK...</span></div><div class="small-note">Stan połączenia z serwerem MCP<br><br>v1.5.3 - KUKA</div></div>
+  </aside>
+  <main class="main">
+    <header class="topbar"><div class="top-left"><button class="icon-button only-mobile" id="toggleSidebar" aria-label="Pokaż historię">☰</button><div style="min-width:0"><div class="top-title" id="currentTitle">Nowa rozmowa</div><div class="top-subtitle" id="modelLine">GPT-OSS · Ollama</div></div></div><div class="top-right"><div class="cfg-wrap"><button type="button" class="cfg-pill" id="modelPill" aria-haspopup="listbox" aria-expanded="false" aria-controls="modelMenu" title="Wybierz model Ollamy"><span class="cfg-label">model</span><span class="cfg-value" id="modelValue">…</span><span class="cfg-caret" aria-hidden="true">▾</span></button><div class="cfg-menu" id="modelMenu" role="listbox" aria-label="Model Ollamy" hidden></div></div><div class="cfg-wrap"><button type="button" class="cfg-pill" id="ctxPill" aria-haspopup="listbox" aria-expanded="false" aria-controls="ctxMenu" title="Wybierz rozmiar kontekstu"><span class="cfg-label">kontekst</span><span class="cfg-value" id="ctxValue">…</span><span class="cfg-caret" aria-hidden="true">▾</span></button><div class="cfg-menu" id="ctxMenu" role="listbox" aria-label="Rozmiar kontekstu" hidden></div></div><span class="pill">● LOCAL ONLY</span><button class="icon-button only-mobile" id="toggleTools" aria-label="Pokaż aktywność MCP" title="Aktywność MCP">⚙</button></div></header>
+    <section class="chat-scroll" id="chatScroll"><div class="chat-inner" id="chatContent"></div></section>
+    <footer class="composer-area"><div class="composer"><textarea id="prompt" rows="2" placeholder="Zapytaj o skrypty, API albo mechaniki Arma Reforger..." aria-label="Wiadomość"></textarea><div class="composer-footer"><span class="composer-hint">Enter — wyślij · Shift+Enter — nowa linia</span><button class="send-button" id="send">Wyślij <span style="font-size:16px;line-height:12px">↗</span></button></div></div><div class="below-composer">Odpowiedzi modelu wymagają weryfikacji przed użyciem w modzie.</div></footer>
+  </main>
+  <aside class="tools-panel" id="toolsPanel"><div class="right-top"><div class="right-title">Aktywność MCP</div><button class="icon-button only-mobile" id="closeTools" aria-label="Zamknij panel">✕</button></div><div class="right-sub">Podgląd faktycznych wywołań narzędzi</div><div class="panel-section">Ostatnie wywołania</div><div class="tool-list" id="toolList"></div><div class="right-footer"><div class="mode-tag">✓ Tylko odczyt</div><div id="toolCount">System używa 8 narzędzi Enfusion MCP BK</div><div>Wyniki kodu z MCP są używane w pamięci i nie są zapisywane do historii rozmów.</div></div></aside>
+</div>
+<div class="toast" id="toast" hidden></div>
+<script>
+(() => {
+  'use strict';
+  const $ = id => document.getElementById(id);
+  const state = {sessions:[], current:null, detail:null, job:null, timer:null, busy:false, model:'gpt-oss:20b',
+    settings:{model:'', num_ctx:0, min_ctx:32768, max_ctx:262144, presets:[32768,49152,65536,98304,131072]}};
+  const esc = str => String(str ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  function notify(text) { const el=$('toast'); el.textContent=text;el.hidden=false;clearTimeout(notify.timer);notify.timer=setTimeout(()=>el.hidden=true,3200); }
+  async function api(path, method='GET', data=null) {
+    const opt={method,headers:{}};
+    if(method!=='GET'){opt.headers['Content-Type']='application/json';opt.headers['X-Assistant-UI']='1';opt.body=JSON.stringify(data ?? {});}
+    const response=await fetch(path,opt); let result;
+    try{result=await response.json();}catch{throw new Error('Nieprawidłowa odpowiedź serwera.');}
+    if(!response.ok)throw new Error(result.error || `HTTP ${response.status}`);
+    return result;
+  }
+  function safeInline(raw){
+    // Najpierw chronimy fragmenty kodu (placeholdery), żeby **, * i _ w kodzie nie były formatowane.
+    const codes=[];
+    let s=esc(String(raw ?? '').replace(/\u0000/g,'')).replace(/`([^`\n]+)`/g,(m,c)=>{codes.push(c);return '\u0000'+(codes.length-1)+'\u0000';});
+    s=s.replace(/\*\*(.+?)\*\*/g,'<strong>$1</strong>');
+    s=s.replace(/(^|[\s(])\*([^*\s][^*\n]*?)\*(?=$|[\s).,;:!?])/g,'$1<em>$2</em>');
+    s=s.replace(/(^|[\s(])_([^_\n]+?)_(?=$|[\s).,;:!?])/g,'$1<em>$2</em>');
+    return s.replace(/\u0000(\d+)\u0000/g,(m,i)=>'<code>'+codes[Number(i)]+'</code>');
+  }
+  // Podział wiersza tabeli na komórki: nie tnie w kodzie (`a || b`) ani po \| .
+  function splitRow(row){
+    let r=row.trim();
+    if(r.startsWith('|'))r=r.slice(1);
+    if(r.endsWith('|')&&!r.endsWith('\\|'))r=r.slice(0,-1);
+    const cells=[];let cur='',inCode=false;
+    for(let k=0;k<r.length;k++){
+      const ch=r[k];
+      if(ch==='\\'&&r[k+1]==='|'){cur+='|';k++;continue;}
+      if(ch==='`'){inCode=!inCode;cur+=ch;continue;}
+      if(ch==='|'&&!inCode){cells.push(cur.trim());cur='';continue;}
+      cur+=ch;
+    }
+    cells.push(cur.trim());
+    return cells;
+  }
+  const isTableSep=l=>l.includes('|')&&/^\s*\|?\s*:?-+:?\s*(\|\s*:?-+:?\s*)*\|?\s*$/.test(l);
+  const LIST_RE=/^(\s*)([-*]|\d+\.)\s+(.*)$/;
+  // Listy z zagnieżdżeniem wg wcięcia.
+  function renderList(items){
+    let out='';const stack=[];
+    for(const it of items){
+      while(stack.length&&it.indent<stack[stack.length-1].indent){out+='</li></'+stack.pop().tag+'>';}
+      const top=stack[stack.length-1];
+      if(!top||it.indent>top.indent){const tag=it.ordered?'ol':'ul';out+='<'+tag+'>';stack.push({indent:it.indent,tag});}
+      else{out+='</li>';}
+      out+='<li>'+safeInline(it.text);
+    }
+    while(stack.length){out+='</li></'+stack.pop().tag+'>';}
+    return out;
+  }
+  function markdown(src){
+    const pieces=String(src||'').split(/(```[^\n]*\n[\s\S]*?```)/g);
+    return pieces.map(piece=>{
+      if(piece.startsWith('```') && piece.endsWith('```')){
+        const split=piece.indexOf('\n');const lang=piece.slice(3,split).trim().slice(0,20)||'kod';
+        const code=piece.slice(split+1,-3).replace(/\n$/,'');
+        return `<div class="code-wrap"><div class="code-head"><span>${esc(lang)}</span><button type="button" class="copy-code">Kopiuj</button></div><pre><code>${esc(code)}</code></pre></div>`;
+      }
+      const lines=piece.split('\n');let out='',i=0;
+      while(i<lines.length){let l=lines[i];if(!l.trim()){i++;continue;}
+        if(/^\s*([-*_])(\s*\1){2,}\s*$/.test(l)){out+='<hr>';i++;continue;}
+        if(i+1<lines.length && l.includes('|') && isTableSep(lines[i+1])){
+          let rows=`<tr>${splitRow(l).map(c=>`<th>${safeInline(c)}</th>`).join('')}</tr>`;i+=2;
+          while(i<lines.length && lines[i].includes('|') && lines[i].trim()){rows+=`<tr>${splitRow(lines[i]).map(c=>`<td>${safeInline(c)}</td>`).join('')}</tr>`;i++;}
+          out+=`<table>${rows}</table>`;continue;
+        }
+        const h=l.match(/^(#{1,3})\s+(.*)/);
+        if(h){const level=h[1].length;out+=`<h${level}>${safeInline(h[2])}</h${level}>`;i++;continue;}
+        if(/^\s*>\s?/.test(l)){const group=[];while(i<lines.length&&/^\s*>\s?/.test(lines[i]))group.push(lines[i++].replace(/^\s*>\s?/,''));out+=`<blockquote>${group.map(safeInline).join('<br>')}</blockquote>`;continue;}
+        if(LIST_RE.test(l)){const items=[];
+          while(i<lines.length && LIST_RE.test(lines[i])){const m=lines[i++].match(LIST_RE);items.push({indent:m[1].replace(/\t/g,'    ').length,ordered:/\d/.test(m[2]),text:m[3]});}
+          out+=renderList(items);continue;}
+        const paragraph=[];while(i<lines.length && lines[i].trim() && !/^(#{1,3})\s+/.test(lines[i]) && !/^\s*(?:[-*]|\d+\.)\s+/.test(lines[i]) && !/^\s*>\s?/.test(lines[i]) && !/^\s*([-*_])(\s*\1){2,}\s*$/.test(lines[i]))paragraph.push(lines[i++]);
+        if(paragraph.length)out+=`<p>${paragraph.map(safeInline).join('<br>')}</p>`;
+      }
+      return out;
+    }).join('');
+  }
+  // ---- Wybór modelu i kontekstu (górny pasek) ----
+  const fmtCtx=n=>{const k=n/1024;return (Number.isInteger(k)?k:Math.round(k))+'k';};
+  const fmtNum=n=>String(n).replace(/\B(?=(\d{3})+(?!\d))/g,'\u00a0');
+  const MENUS={model:{pill:'modelPill',menu:'modelMenu'},ctx:{pill:'ctxPill',menu:'ctxMenu'}};
+  function renderSettings(){
+    const st=state.settings;
+    $('modelValue').textContent=st.model||'…';$('modelPill').title='Model: '+(st.model||'?')+' (kliknij, aby zmienić)';
+    $('ctxValue').textContent=st.num_ctx?fmtCtx(st.num_ctx):'…';$('ctxPill').title='Kontekst: '+(st.num_ctx?fmtNum(st.num_ctx)+' tokenów':'?')+' (kliknij, aby zmienić)';
+    $('modelLine').textContent=(st.model||state.model)+(st.num_ctx?' · '+fmtCtx(st.num_ctx):'')+' · Ollama · MCP BK';
+  }
+  const el=(tag,cls,text)=>{const e=document.createElement(tag);if(cls)e.className=cls;if(text!==undefined)e.textContent=text;return e;};
+  function menuItems(root){return [...root.querySelectorAll('.cfg-item:not(:disabled)')];}
+  function closeMenus(focusPill){
+    for(const key of Object.keys(MENUS)){const m=$(MENUS[key].menu),p=$(MENUS[key].pill);
+      if(!m.hidden){m.hidden=true;p.setAttribute('aria-expanded','false');if(focusPill)p.focus();}}
+  }
+  function focusSelected(root){const items=menuItems(root);(items.find(i=>i.getAttribute('aria-selected')==='true')||items[0]||root).focus?.();}
+  function toggleMenu(which){
+    const m=$(MENUS[which].menu),p=$(MENUS[which].pill),wasOpen=!m.hidden;
+    closeMenus(false);if(wasOpen)return;
+    m.hidden=false;p.setAttribute('aria-expanded','true');
+    if(which==='model')buildModelMenu();else buildCtxMenu();
+  }
+  async function applySettings(patch,label){
+    try{
+      const result=await api('/api/settings','POST',patch);
+      state.settings={...state.settings,...result};renderSettings();closeMenus(true);
+      notify(label+(state.busy?' Obowiązuje od następnego pytania.':''));
+    }catch(err){notify(err.message);}
+  }
+  function optionButton(main,meta,selected,disabled,onClick,warn){
+    const b=el('button','cfg-item');b.type='button';b.setAttribute('role','option');b.setAttribute('aria-selected',selected?'true':'false');b.disabled=!!disabled;
+    b.append(el('span','cfg-main',main));if(meta){b.append(el('span','cfg-meta'+(warn?' cfg-warn':''),meta));}
+    if(onClick)b.addEventListener('click',onClick);return b;
+  }
+  async function buildModelMenu(){
+    const root=$('modelMenu');root.replaceChildren(el('div','cfg-title','Model Ollamy'),el('div','cfg-note','Ładowanie listy modeli…'));
+    let data;try{data=await api('/api/models');}catch(err){data={ok:false,error:err.message,models:[]};}
+    if(root.hidden)return;
+    root.replaceChildren(el('div','cfg-title','Model Ollamy'));
+    if(!data.ok){root.append(el('div','cfg-note',data.error||'Ollama nie odpowiada.'));return;}
+    const current=state.settings.model,names=data.models.map(m=>m.name);
+    if(current&&!names.includes(current))root.append(optionButton(current,'nie znaleziono w Ollamie',true,true,null,true));
+    if(!data.models.length)root.append(el('div','cfg-note','Brak zainstalowanych modeli. Pobierz model poleceniem: ollama pull <nazwa>'));
+    for(const m of data.models){
+      const meta=[m.params,m.size_gb?m.size_gb+' GB':'',m.tools===false?'bez narzędzi':''].filter(Boolean).join(' · ');
+      root.append(optionButton(m.name,meta,m.name===current,m.tools===false,()=>applySettings({model:m.name},'Model: '+m.name+'.'),m.tools===false));
+    }
+    root.append(el('div','cfg-note','Asystent wymaga modelu z obsługą narzędzi. Był dostrajany i testowany na gpt-oss:20b; inne modele mogą działać inaczej. Zmiana obowiązuje od następnego pytania.'));
+    focusSelected(root);
+  }
+  function buildCtxMenu(){
+    const root=$('ctxMenu'),st=state.settings;root.replaceChildren(el('div','cfg-title','Rozmiar kontekstu'));
+    const presets=st.presets||[];
+    if(st.num_ctx&&!presets.includes(st.num_ctx))root.append(optionButton(fmtCtx(st.num_ctx),fmtNum(st.num_ctx)+' tokenów (własna wartość)',true,true));
+    for(const n of presets){
+      root.append(optionButton(fmtCtx(n),fmtNum(n)+' tokenów'+(n===st.min_ctx?' · minimum':''),n===st.num_ctx,false,()=>applySettings({num_ctx:n},'Kontekst: '+fmtCtx(n)+'.')));
+    }
+    root.append(el('div','cfg-note','Większy kontekst zwiększa zużycie pamięci GPU i czas ładowania modelu; gdy model przestanie mieścić się w VRAM, odpowiedzi zwolnią. Limity wyników narzędzi są dobrane do 32 768 tokenów, więc to minimum.'));
+    const row=el('div','cfg-custom'),label=el('label',null,'Własna:'),input=document.createElement('input'),go=el('button',null,'Ustaw');
+    label.htmlFor='ctxCustom';input.id='ctxCustom';input.type='number';input.min=st.min_ctx;input.max=st.max_ctx;input.step=1024;input.value=st.num_ctx||st.min_ctx;go.type='button';
+    const error=el('div','cfg-error');error.hidden=true;
+    const submit=()=>{const n=Number(input.value);
+      if(!Number.isInteger(n)||n<st.min_ctx||n>st.max_ctx){error.textContent='Podaj liczbę całkowitą od '+fmtNum(st.min_ctx)+' do '+fmtNum(st.max_ctx)+'.';error.hidden=false;input.focus();return;}
+      error.hidden=true;applySettings({num_ctx:n},'Kontekst: '+fmtCtx(n)+'.');};
+    go.addEventListener('click',submit);input.addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();submit();}});
+    row.append(label,input,go);root.append(row,error);
+    focusSelected(root);
+  }
+  function menuKeydown(e){
+    const root=e.currentTarget;
+    if(e.key==='Escape'){e.preventDefault();e.stopPropagation();closeMenus(true);return;}
+    if(e.target.tagName==='INPUT')return;
+    const items=menuItems(root),i=items.indexOf(document.activeElement);
+    if(e.key==='ArrowDown'){e.preventDefault();items[(i+1)%items.length]?.focus();}
+    else if(e.key==='ArrowUp'){e.preventDefault();items[(i-1+items.length)%items.length]?.focus();}
+    else if(e.key==='Home'){e.preventDefault();items[0]?.focus();}
+    else if(e.key==='End'){e.preventDefault();items[items.length-1]?.focus();}
+  }
+  const makeButton=(cls,label,callback)=>{const el=document.createElement('button');el.type='button';el.className=cls;el.textContent=label;el.addEventListener('click',callback);return el;};
+  function buildSessionList(){
+    const root=$('sessionList');root.replaceChildren();const needle=$('search').value.toLowerCase().trim();
+    for(const s of state.sessions.filter(s=>s.title.toLowerCase().includes(needle))){
+      const row=document.createElement('div');row.className='session'+(s.id===state.current?' selected':'');
+      row.appendChild(makeButton('session-title',s.title,()=>selectSession(s.id)));
+      row.appendChild(makeButton('session-delete','×',async e=>{if(!confirm(`Usunąć rozmowę „${s.title}”?`))return;try{await api('/api/sessions/'+s.id+'/delete','POST');await refreshSessions();if(state.current===s.id){state.current=null;state.detail=null; if(state.sessions.length)await selectSession(state.sessions[0].id);else await newChat();}}catch(err){notify(err.message);}}));
+      root.appendChild(row);
+    }
+  }
+  function renderTools(){
+    const root=$('toolList');root.replaceChildren();const traces=state.detail?.traces||[];
+    if(!traces.length){const empty=document.createElement('div');empty.className='no-traces';empty.textContent='Gdy model zacznie używać MCP, zobaczysz tutaj nazwy narzędzi, parametry i czas wykonania.';root.appendChild(empty);return;}
+    for(const ev of [...traces].reverse()){
+      const row=document.createElement('div');row.className='tool-row '+ev.status;
+      const name=document.createElement('div');name.className='tool-name';name.textContent=ev.name||'?';
+      const desc=document.createElement('div');desc.className='tool-desc';desc.textContent=ev.arguments?.query||ev.arguments?.path||'';
+      const meta=document.createElement('div');meta.className='tool-meta';meta.textContent=ev.status==='running'?'W toku…':(ev.status==='error'?'Błąd · ':'Wykonano · ')+(ev.duration_ms??'–')+' ms';
+      row.append(name,desc,meta);
+      const detail=document.createElement('details');const summary=document.createElement('summary');summary.style.cssText='font-size:10px;color:#f0a35a;cursor:pointer;margin-top:6px';summary.textContent='Argumenty';
+      const pre=document.createElement('pre');pre.className='tool-args';pre.textContent=JSON.stringify(ev.arguments||{},null,2);
+      detail.append(summary,pre);row.append(detail);root.appendChild(row);
+    }
+  }
+  function renderChat(){
+    const root=$('chatContent');root.replaceChildren();const turns=state.detail?.turns||[];
+    $('currentTitle').textContent=state.detail?.title||'Nowa rozmowa';
+    if(!turns.length){const welcome=document.createElement('section');welcome.className='welcome';welcome.innerHTML=`<div class="welcome-symbol">R</div><h1>Co dziś tworzymy w Reforgerze?</h1><p>Twój lokalny asystent z dostępem do prawdziwego API i skryptów gry przez Enfusion MCP BK. Bez OpenCode, bez kopiowania zasobów gry.</p><div class="suggestions"><button class="suggestion" data-example="Znajdź skrypty odpowiedzialne za zużycie paliwa w pojazdach i wyjaśnij ich działanie."><strong>Zużycie paliwa</strong><span>Sprawdź mechanikę pojazdów w kodzie gry</span></button><button class="suggestion" data-example="Znajdź mechanizm zadawania obrażeń pojazdom. Pokaż rzeczywiste klasy i skrypty."><strong>System obrażeń</strong><span>Wyszukaj komponenty i powiązane API</span></button><button class="suggestion" data-example="Wyjaśnij, jak w Arma Reforger działają zdarzenia GameMode, na podstawie rzeczywistego kodu."><strong>GameMode</strong><span>Zrozum zdarzenia i cykl życia trybu</span></button><button class="suggestion" data-example="Znajdź skrypty związane z ekwipunkiem gracza i wskaż najważniejsze klasy."><strong>Ekwipunek</strong><span>Odkryj istniejące komponenty i metody</span></button></div>`;
+      welcome.querySelectorAll('[data-example]').forEach(b=>b.addEventListener('click',()=>{$('prompt').value=b.dataset.example;autoGrow();$('prompt').focus();}));root.append(welcome);}
+    for(const turn of turns){
+      const msg=document.createElement('div');msg.className='message '+(turn.role==='user'?'user':'assistant');
+      if(turn.role==='user'){const b=document.createElement('div');b.className='bubble-user';b.textContent=turn.content;msg.appendChild(b);}
+      else{msg.classList.add('assistant-message');const avatar=document.createElement('div');avatar.className='avatar';avatar.textContent='R';const body=document.createElement('div');body.className='assistant-body';body.innerHTML=markdown(turn.content);const actions=document.createElement('div');actions.className='msg-actions';actions.appendChild(makeButton('copy-answer','Kopiuj odpowiedź',()=>copyText(turn.content)));body.appendChild(actions);msg.append(avatar,body);}
+      root.appendChild(msg);
+    }
+    if(state.detail?.busy){const think=document.createElement('div');think.className='message thinking';think.innerHTML='<div class="avatar">R</div><span id="thinkingText">Analizuję źródła...</span><span class="dots"><b></b><b></b><b></b></span>';root.appendChild(think);}
+    root.querySelectorAll('.copy-code').forEach(button=>button.addEventListener('click',()=>copyText(button.closest('.code-wrap').querySelector('pre code').textContent)));
+    requestAnimationFrame(()=>{const scroll=$('chatScroll');scroll.scrollTop=scroll.scrollHeight;});
+  }
+  async function copyText(text){try{await navigator.clipboard.writeText(text);notify('Skopiowano do schowka');}catch{notify('Nie udało się skopiować');}}
+  async function refreshSessions(){state.sessions=await api('/api/bootstrap').then(x=>x.sessions);buildSessionList();}
+  async function newChat(){if(state.busy){notify('Zakończ bieżące pytanie, zanim zmienisz rozmowę.');return;}
+    try{const s=await api('/api/sessions','POST');state.current=s.id;state.detail=s;localStorage.setItem('reforger-current-session',s.id);await refreshSessions();renderChat();renderTools();$('prompt').focus();$('sidebar').classList.remove('open');}catch(err){notify(err.message);}}
+  async function selectSession(sid){if(state.busy){notify('Zakończ bieżące pytanie, zanim zmienisz rozmowę.');return;}
+    try{state.current=sid;state.detail=await api('/api/sessions/'+sid);localStorage.setItem('reforger-current-session',sid);buildSessionList();renderChat();renderTools();$('sidebar').classList.remove('open');}catch(err){notify(err.message);}}
+  function autoGrow(){const ta=$('prompt');ta.style.height='auto';ta.style.height=Math.min(185,Math.max(50,ta.scrollHeight))+'px';}
+  function updateControls(){const disabled=state.busy;$('send').disabled=disabled||!$('prompt').value.trim();$('newChat').disabled=disabled;}
+  async function send(){const question=$('prompt').value.trim();if(!question||state.busy||!state.current)return;
+    state.busy=true;updateControls();$('prompt').value='';autoGrow();
+    try{const result=await api('/api/sessions/'+state.current+'/chat','POST',{text:question});state.job=result.job_id;localStorage.setItem('reforger-active-job',result.job_id);state.detail=await api('/api/sessions/'+state.current);renderChat();await refreshSessions();pollJob();}
+    catch(err){state.busy=false;$('prompt').value=question;autoGrow();updateControls();notify('Błąd: '+err.message);}
+  }
+  async function pollJob(){if(!state.job)return;try{
+    const job=await api('/api/jobs/'+state.job);if(state.detail&&state.detail.id===job.session_id){
+      // Ślady bieżącego zadania są w odpowiedzi /api/jobs (tool_events); starsze zostają z wczytanej sesji.
+      state.detail.traces=[...(state.detail.traces||[]).filter(t=>t.job_id!==job.id),...(job.tool_events||[])];renderTools();
+      const text=$('thinkingText');if(text){const elapsed=Math.max(0,Math.floor((Date.now()-Date.parse(job.created_at))/1000));text.textContent=(job.phase || (job.status==='queued'?'Oczekuję na model…':'Model analizuje pytanie…'))+' · '+elapsed+' s';}
+    }
+    if(job.status==='done'||job.status==='error'){
+      state.busy=false;state.job=null;localStorage.removeItem('reforger-active-job');state.detail=await api('/api/sessions/'+state.current);renderChat();renderTools();await refreshSessions();updateControls();if(job.status==='error')notify('Błąd modelu: '+job.error);return;
+    }
+    state.timer=setTimeout(pollJob,750);
+  }catch(err){state.timer=setTimeout(pollJob,1750);notify('Problem z połączeniem: '+err.message);}}
+  async function init(){try{const data=await api('/api/bootstrap');state.sessions=data.sessions;state.model=data.model;state.settings={...state.settings,...(data.settings||{model:data.model})};renderSettings();$('connectionText').textContent='MCP BK połączony';$('toolCount').textContent='System używa '+data.tools.length+' narzędzi Enfusion MCP BK';
+      const prev=localStorage.getItem('reforger-current-session');const sid=state.sessions.find(s=>s.id===prev)?.id||state.sessions[0]?.id;
+      if(sid)await selectSession(sid);else await newChat();
+      const jid=localStorage.getItem('reforger-active-job');if(jid){try{const job=await api('/api/jobs/'+jid);if(job.session_id===state.current&&['queued','running'].includes(job.status)){state.busy=true;state.job=jid;pollJob();}else{localStorage.removeItem('reforger-active-job');}}catch{localStorage.removeItem('reforger-active-job');}}
+      updateControls();
+    }catch(err){$('connectionText').textContent='Brak połączenia!';$('chatContent').textContent='Nie udało się połączyć z lokalnym serwerem: '+err.message;notify('Uruchom python reforger_assistant_WEB.py');}}
+  $('newChat').addEventListener('click',newChat);$('search').addEventListener('input',buildSessionList);$('send').addEventListener('click',send);$('prompt').addEventListener('input',()=>{autoGrow();updateControls();});$('prompt').addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey&&!e.isComposing){e.preventDefault();send();}});
+  $('modelPill').addEventListener('click',()=>toggleMenu('model'));$('ctxPill').addEventListener('click',()=>toggleMenu('ctx'));
+  $('modelMenu').addEventListener('keydown',menuKeydown);$('ctxMenu').addEventListener('keydown',menuKeydown);
+  document.addEventListener('click',e=>{if(!e.target.closest('.cfg-wrap'))closeMenus(false);});
+  $('toggleSidebar').addEventListener('click',()=>$('sidebar').classList.toggle('open'));$('toggleTools').addEventListener('click',()=>$('toolsPanel').classList.toggle('open'));$('closeTools').addEventListener('click',()=>$('toolsPanel').classList.remove('open'));
+  init();
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,7 @@
+# Końce linii: pliki wsadowe Windows muszą mieć CRLF, reszta LF
+* text=auto
+*.cmd text eol=crlf
+*.bat text eol=crlf
+*.py text eol=lf
+*.html text eol=lf
+*.md text eol=lf
