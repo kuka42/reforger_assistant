@@ -72,6 +72,29 @@ def invented_icon(text: str) -> bool:
 NEGATION = re.compile(r"\bnie\b|\bbrak\b|\bbez\b|nieistniej|not found|does not exist", re.I)
 
 
+_FENCE_RE = re.compile(r"```[^\n]*\n(.*?)```", re.S)
+_GAME_LABEL = re.compile(r"z\s+kodu\s+gry|fragment\w*\s+z\s+gry|kod\s+z\s+gry", re.I)
+_PATH_ANY = re.compile(r"(?:scripts|prefabs|configs|ui)/[\w./\-{}]+\.(?:c|et|conf|layout|proto)|\w+\.(?:c|et)\b", re.I)
+
+
+def game_label_without_file(text: str) -> bool:
+    """Blok kodu poprzedzony etykietą 'z kodu gry' bez wskazanego pliku (ścieżka w pierwszych liniach bloku
+    albo w tekście tuż przed blokiem); bloki opisane jako szkic/nowy plik pomijamy."""
+    prev = 0
+    for m in _FENCE_RE.finditer(text):
+        gap = text[prev:m.start()]
+        prev = m.end()
+        if not _GAME_LABEL.search(gap[-220:]):
+            continue
+        head = "\n".join(m.group(1).split("\n")[:4])
+        if _PATH_ANY.search(head) or _PATH_ANY.search(gap[-400:]):
+            continue
+        if re.search(r"szkic|nowy plik|nowa klasa", gap[-250:] + head, re.I):
+            continue
+        return True
+    return False
+
+
 def invented_weaponlog_file(text: str) -> bool:
     """Plik SCR_WeaponLogManager.c podany jak prawdziwe źródło: linia z przeczeniem, pytaniem
     ('sprawdź, czy istnieje') albo sugestią szukania nie jest twierdzeniem."""
@@ -110,6 +133,7 @@ def entity_getprefabname_call(text: str) -> bool:
 
 # Błędy, które wystąpiły w różnych testach (sprawdzane w KAŻDEJ odpowiedzi).
 COMMON_BAD = [
+    ("blok oznaczony 'z kodu gry' bez wskazania pliku (kod własny opisany jako cytat z gry)", game_label_without_file),
     ("wymyślony poziom LogLevel (są: SPAM, VERBOSE, DEBUG, NORMAL, WARNING, ERROR, FATAL)",
      rx(r"LogLevel\.(?!(?:SPAM|VERBOSE|DEBUG|NORMAL|WARNING|ERROR|FATAL)\b|c\b)\w+", I)),
     ("nieistniejąca klasa bazowa SCR_Component", rx(r":\s*SCR_Component\b")),
@@ -315,6 +339,8 @@ TESTS = [
                 ("FindComponent(...).Cast<T>() (nieprawidłowa składnia)", rx(r"FindComponent\([^)]*\)\s*\.\s*Cast\s*<")),
                 ("zła klasa bazowa SCR_CharacterControllerComponent (jest CharacterControllerComponent)",
                  rx(r"class\s+SCR_CharacterControllerComponent\s*:\s*(?!CharacterControllerComponent\b)\w+")),
+                ("m_bInspectionFocus użyte zamiast GetInspect() (pole protected: fokus podglądu, nie stan trybu)",
+                 rx(r"\b[a-z]\w*\.m_bInspectionFocus|(?:użyć|użycie|sprawdz)\w*[^\n]{0,70}m_bInspectionFocus")),
                 ("m_bInspectionFocus opisane jako 'tryb inspekcji' (to fokus podglądu, nie stan trybu)",
                  rx(r"m_bInspectionFocus[^\n]{0,90}(tryb\w*\s+inspekcj|jest w trybie|czy postać)")),
                 ("wymyślone API inspekcji", lambda t: bool(re.search(r"\b(GetIsInspecting|IsInspecting|IsInspect)\s*\(|\bInspectionComponent\b", t))),

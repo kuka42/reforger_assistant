@@ -1,17 +1,12 @@
 #!/usr/bin/env python3
-
 # -*- coding: utf-8 -*-
-"""
-Reforger Assistant MCP BK — Ollama + Enfusion MCP.
+"""Reforger Assistant MCP BK — Ollama + Enfusion MCP.
 
 Wyłącznie rozmawia z lokalnym serwerem Enfusion MCP BK, który korzysta z instalacji gry.
 Narzędzia zapisu / uruchamiania Workbencha są celowo niedostępne dla modelu.
 
-Należy ustawić sciezke do serwera Enfusion MCP NK w MCP_SCRIPT i ściezke gry w GAME_PATH
-
 Wymagania: Python 3.10+, Node.js, Ollama, zbudowany Enfusion MCP BK.
 """
-
 from __future__ import annotations
 
 import argparse
@@ -33,15 +28,14 @@ try:
 except ImportError as _exc:  # jasny komunikat zamiast tracebacku
     raise SystemExit("Brak pliku reforger_helpers.py obok tego pliku: " + str(_exc))
 
-VERSION = "1.5.3-thinking"
+VERSION = "1.5.4-wiki"
 
-# Ścieżki do serwera Enfusion MCP BK - edytowalne
-
+# Ścieżki potwierdzone podczas poprzednich testów użytkownika — edytowalne.
 MCP_SCRIPT = os.environ.get(
-    "ENFUSION_MCP_SCRIPT", r"C:\enfusion-mcp-BK\dist\index.js"
+    "ENFUSION_MCP_SCRIPT", r"F:\reforger-scripts\enfusion-mcp-BK\dist\index.js"
 )
 GAME_PATH = os.environ.get(
-    "ENFUSION_GAME_PATH", r"C:\SteamLibrary\steamapps\common\Arma Reforger"
+    "ENFUSION_GAME_PATH", r"D:\SteamLibrary\steamapps\common\Arma Reforger"
 )
 
 def _env_int(name: str, default: int) -> int:
@@ -144,7 +138,8 @@ first line of each result: "[Dokładne trafienie ...]" means found; "[BRAK DOKŁ
 in code or in a "verified" list.
 api_search covers class members only. Global functions (Print, PrintFormat, ...) and general
 Enforce Script questions: use wiki_search and then wiki_read the best page (search returns only
-truncated snippets).
+truncated snippets). wiki_read takes the page TITLE exactly as in the "## Title" header of a wiki_search
+result (e.g. "Scripting: Conventions"), never the Source URL or its Arma_Reforger:... slug.
 game_read also accepts query (search text inside the WHOLE file) and line_start/line_end.
 When a file is shown shortened, use query instead of guessing what the omitted part contains.
 game_browse "pattern" matches FILE NAMES (glob), never file content.
@@ -733,6 +728,10 @@ _EXAMPLE_RE = re.compile(r"przykład|przyklad|jak użyć|jak uzyc|użycie|uzycie
 _GAME_QUOTE_RE = re.compile(r"fragment\w*\s+z\s+(?:gry|kodu|pliku)|z kodu gry|z pliku|plik\s*:|źródł|kod\s+pochodzi", re.I)
 # Separator pominięcia: sama linia "..." albo komentarz zaczynający się od "..." (np. "// ... (reszta Init)")
 _EXAMPLE_PATH_RE = re.compile(r"example|yourscript|your_script|mymod|myscript|twojmod|twoj_mod|sample|placeholder", re.I)
+_GAME_LABEL_RE = re.compile(r"z\s+kodu\s+gry|fragment\w*\s+z\s+gry|kod\s+z\s+gry", re.I)
+_ENTRY_GUID_RE = re.compile(r'([A-Za-z_]\w*)\s+"\{([0-9A-Fa-f]{16})\}"\s*[:{]')     # (klasa wpisu, GUID wpisu) w prefabie
+_SCRIPT_LIKE_RE = re.compile(r"^\s*(?:proto external|modded class|override\s|class\s+\w+\s*[:{])", re.M)
+_PREFAB_LIKE_RE = re.compile(r'^\s*\w+\s+"\{[0-9A-Fa-f]{16}\}"', re.M)
 _SEPARATOR_RE = re.compile(r"^\s*(?:\.\.\.|…|//\s*(?:\.\.\.|…).*|/\*\s*(?:\.\.\.|…).*\*/)\s*$")
 
 
@@ -740,6 +739,12 @@ def _norm_code(text: str) -> str:
     text = re.sub(r"/\*.*?\*/", "", text, flags=re.S)
     text = re.sub(r"//[^\n]*", "", text)
     return re.sub(r"\s+", "", text)
+
+
+def _display_name(key: str, text: str) -> str:
+    """Nazwa pliku z oryginalną wielkością liter (z nagłówka odczytu '// ścieżka (from .pak)'), inaczej z klucza."""
+    m = re.match(r"//\s*(\S+)\s*\(from", text or "")
+    return (m.group(1) if m else key).rsplit("/", 1)[-1]
 
 
 def _find_evidence(files: dict[str, str], path: str):
@@ -790,7 +795,30 @@ def _verify_answer(answer: str, files: dict[str, str]):
         own_example = bool(_EXAMPLE_RE.search(last_line)
                            and not (_GAME_QUOTE_RE.search(last_line) or _PATH_RE.search(last_line))
                            and not head_paths)
+        if path:
+            low = path.lower()
+            if ((low.endswith((".et", ".conf", ".layout")) and _SCRIPT_LIKE_RE.search(block))
+                    or (low.endswith(".c") and _PREFAB_LIKE_RE.search(block))):
+                path = None                 # przypisanie nie pasuje do treści bloku: nie weryfikujemy go z tym plikiem
         first_lines = "\n".join(lines[:3])
+        attributed = bool(path) and not (_OWN_CODE_RE.search(window) or own_example)
+        if (not path and not _OWN_CODE_RE.search(window) and not own_example and _GAME_LABEL_RE.search(gap[-220:])):
+            findings.append("blok oznaczony jako 'z kodu gry' nie wskazuje pliku - cytat niepotwierdzony")
+        if not attributed or _EXAMPLE_PATH_RE.search(path or ""):
+            # Nowy kod nie powinien używać identyfikatorów istniejących wpisów (kolizja/nadpisanie wpisu).
+            for cls, guid in dict.fromkeys(_ENTRY_GUID_RE.findall(block)):
+                owner = next((k for k, txt in files.items() if "{" + guid.upper() + "}" in txt.upper()), None)
+                if not owner:
+                    continue
+                found = re.search(r'([A-Za-z_]\w*)\s+"\{' + guid + r'\}"', files[owner], re.I)
+                if found and found.group(1) != cls:
+                    # Ten sam GUID dla INNEJ klasy = kolizja identyfikatorów. Ta sama klasa to cytat albo
+                    # prawidłowe nadpisanie wpisu w override prefabu (np. ActionsManagerComponent).
+                    msg = (f"GUID {{{guid}}} jest w '{_display_name(owner, files[owner])}' przypisany do wpisu "
+                           f"{found.group(1)}, a tutaj użyty dla {cls}: kolizja identyfikatorów "
+                           "(nowy wpis powinien mieć własny GUID)")
+                    if msg not in findings:
+                        findings.append(msg)
         if (not path or _OWN_CODE_RE.search(window) or own_example
                 or _EXAMPLE_PATH_RE.search(path) or re.search(r"\bnp\.|e\.g\.", first_lines)):
             continue                     # kod własny modelu / ścieżka przykładowa / bez przypisanego pliku
@@ -879,6 +907,15 @@ def _emergency_history_entry(content: str) -> dict:
     if EMERGENCY_IN_HISTORY == "keep":
         return {"role": "assistant", "content": content}
     return {"role": "assistant", "content": EMERGENCY_PLACEHOLDER}
+
+
+WIKI_TITLE_HINT = ("\n[Podpowiedź: w wiki_read podaj tytuł dokładnie jak w nagłówku '## Tytuł' wyniku wiki_search "
+                   "(np. 'Scripting: Conventions'), bez adresu, bez prefiksu 'Arma Reforger:' i bez podkreślników. "
+                   "Sugestia 'Did you mean' bywa nietrafna.]")
+
+
+def _is_wiki_miss(text: str) -> bool:
+    return str(text or "").lstrip().startswith("No wiki page found")
 
 
 def _suggest_paths(mcp, path: str) -> str:
@@ -1398,6 +1435,7 @@ def _ask_impl(question: str, messages: list[dict], mcp: MCPStdioClient,
                     arguments, view = _extract_view_spec(arguments)
                 # Naprawa PRZED limitem i dedupe: halucynowane nazwy (search/open...),
                 # nieznane argumenty, typy i limity wg prawdziwego schematu z tools/list.
+                model_title = arguments.get("title") if isinstance(arguments, dict) else None
                 fixed_name, fixed_args, notes = repair_tool_call(name, arguments, mcp.tools)
                 if fixed_name is None:
                     # Błąd modelu, nie wyszukiwanie: nie wołamy MCP i nie liczymy do limitu.
@@ -1473,6 +1511,15 @@ def _ask_impl(question: str, messages: list[dict], mcp: MCPStdioClient,
                         result = mcp.call_tool(name, arguments)
                         is_error = bool(result.get("isError"))
                         raw = _raw_text(result)
+                        if (name == "wiki_read" and not is_error and _is_wiki_miss(raw)
+                                and isinstance(model_title, str) and model_title.strip()
+                                and model_title != arguments.get("title")):
+                            # Znormalizowany tytuł nie istnieje: próbujemy raz tytułu dokładnie takiego, jak podał model.
+                            second = mcp.call_tool(name, {**arguments, "title": model_title})
+                            if not second.get("isError") and not _is_wiki_miss(_raw_text(second)):
+                                result, raw = second, _raw_text(second)
+                                notes.append(f"użyto tytułu z wywołania modelu: {model_title!r}")
+                                print(f"  [REPAIR] wiki_read: znormalizowany tytuł nie istnieje; użyto {model_title!r}", flush=True)
                         view_found = True
                         if name == "game_read" and not is_error:
                             full_cache[base_signature] = raw
@@ -1499,9 +1546,12 @@ def _ask_impl(question: str, messages: list[dict], mcp: MCPStdioClient,
                             # widok bez dopasowań) nie jest nową informacją: nie zeruje licznika zastoju.
                             negative = ((name == "api_search" and response.startswith("[BRAK DOKŁADNEGO TRAFIENIA"))
                                         or (name == "asset_search" and raw.lstrip().lower().startswith("no assets found"))
+                                        or (name == "wiki_read" and _is_wiki_miss(raw))
                                         or (view is not None and not view_found))
+                            if negative and name == "wiki_read":
+                                response += WIKI_TITLE_HINT
                             if negative:
-                                misses.append(f"{name}({arguments.get('query', arguments.get('path', ''))})"
+                                misses.append(f"{name}({arguments.get('query', arguments.get('path', arguments.get('title', '')))})"
                                               + (f" {_view_label(view)}" if view else ""))
                             else:
                                 successful_tool = True

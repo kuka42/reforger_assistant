@@ -12,6 +12,7 @@ Test na prawdziwym BaseUserAction.c (5280 zn.):
   digest_enforce(sygnatury) -> 1721 zn., 0 zgubionych metod
 """
 import re
+from urllib.parse import unquote
 
 # nazwy, które modele (zwł. gpt-oss) halucynują z własnego treningu
 ALIASES = {
@@ -47,6 +48,23 @@ def _coerce(value, spec):
         value = alt
     return value
 
+def normalize_wiki_title(title):
+    """Tytuł strony dla wiki_read: dokładnie jak w nagłówku '## Tytuł' wyniku wiki_search (np. 'Scripting: Conventions').
+    Modele kopiują zamiast tego fragment adresu ('Arma_Reforger:Scripting:_Conventions'), który wiki_read odrzuca
+    ('No wiki page found'). Usuwamy adres i prefiks 'Arma Reforger:', podkreślniki zamieniamy na spacje,
+    a po dwukropku wstawiamy spację. Gdy po normalizacji nic nie zostaje, zwracamy tytuł bez zmian."""
+    original = str(title or "").strip()
+    t = original.strip("\"'`")
+    m = re.search(r"/wiki/([^?#\s]+)", t)
+    if m:
+        t = unquote(m.group(1))
+    t = re.sub(r"^Arma[ _]Reforger\s*:\s*", "", t, flags=re.I)
+    t = t.replace("_", " ")
+    t = re.sub(r":(?=\S)", ": ", t)
+    t = re.sub(r"\s+", " ", t).strip()
+    return t or original
+
+
 def repair_tool_call(name, args, tools):
     """-> (name, args, notes). Naprawia deterministycznie; nic nie zgaduje po cichu:
     każda zmiana trafia do notes i wraca do modelu razem z wynikiem."""
@@ -80,6 +98,11 @@ def repair_tool_call(name, args, tools):
         else:
             if cv != v: notes.append(f"'{k}': {v!r} -> {cv!r}")
             clean[k] = cv
+    if name == "wiki_read" and isinstance(clean.get("title"), str):
+        norm = normalize_wiki_title(clean["title"])
+        if norm != clean["title"]:
+            notes.append(f"'title': {clean['title']!r} -> {norm!r} (tytuł jak w nagłówku wyniku wiki_search)")
+            clean["title"] = norm
     miss = [r for r in tools[name].get("inputSchema", {}).get("required", []) if r not in clean]
     if miss:
         return None, clean, [f"{name}: brak wymaganych argumentów {miss}"] + notes
