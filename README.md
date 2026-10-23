@@ -7,10 +7,12 @@ Lokalny asystent dla modderów **Arma Reforger**. Odpowiada na pytania o skrypty
 * Asystent cytuje kod z plików gry i pokazuje, z których narzędzi korzystał, ale model nadal może się mylić (patrz [Ograniczenia](#ograniczenia)).
 
 ```text
-Przeglądarka  <->  lokalny serwer (Python)  <->  silnik  <->  Ollama (model)
-  assistant.html     reforger_assistant_WEB.py     reforger_assistant_MCP_BK.py
+Przeglądarka  <->  lokalny serwer (Python)  <->  silnik  <->  model (Ollama)  <->  ustawienia
+  assistant.html     reforger_assistant_WEB.py     reforger_assistant_MCP_BK.py     reforger_config.py
                                                       |
-                                                      +-->  Enfusion MCP BK (Node)  <->  pliki gry i wiki
+                                             reforger_assistant_MCP_BK
+                                                      |
+                                                      +-->  Enfusion MCP BK (Node)  <->  pliki gry, wiki
 ```
 
 ## Wymagania
@@ -20,17 +22,17 @@ Przeglądarka  <->  lokalny serwer (Python)  <->  silnik  <->  Ollama (model)
 |Windows|Używane i testowane na Windows; launchery `.cmd` są tylko dla Windows|
 |Python 3.10 lub nowszy|Tylko biblioteka standardowa, **nie trzeba nic instalować przez pip** (testowane na 3.12)|
 |Node.js w `PATH`|Uruchamia serwer MCP (`node dist/index.js`)|
-|Enfusion MCP BK|Zbudowany serwer MCP, plik `dist/index.js` -> https://github.com/steffenbk/enfusion-mcp-BK|
+|Enfusion MCP BK|Zbudowany serwer MCP, plik `dist/index.js` -> https:/github.com/steffenbk/enfusion-mcp-BK|
 |Ollama + model z obsługą narzędzi|Testowano na `gpt-oss:20b`|
 |Arma Reforger|Zainstalowana gra (potrzebna ścieżka do jej folderu)|
 
-Przykład sprzętu: RTX 4070 Ti Super 16 GB. Model `gpt-oss:20b` przy kontekście 32k zajmuje około 12 GB VRAM i działa w całości na GPU.
+Przykladowy testowany sprzet: RTX 4070 Ti Super 16 GB. Model `gpt-oss:20b` z kontekstem 32k (zajmuje około 12 GB VRAM i działa w całości na GPU)
 
 ## Szybki start
 
 1. Skopiuj wszystkie pliki asystenta do jednego folderu (lista w sekcji [Pliki](#pliki)).
 2. **Ustaw ścieżki.** Domyślne wartości wskazują (`C:\enfusion-mcp-BK\dist\index.js` i `C:\Program Files\Steam\steamapps\common\Arma Reforger`)
-W `START_ASSISTANT_WEB.cmd`, własne dopisz przed linią `python "reforger_assistant_WEB.py"`:
+W `reforger_config.py`, dopisz własne po linii z wersja aplikacji `VERSION = "1.8.X""`:
 
 ```bat
    set "ENFUSION_MCP_SCRIPT=C:\ścieżka\do\enfusion-mcp-BK\dist\index.js"
@@ -93,7 +95,7 @@ Ustawiasz je w launcherze (`set "NAZWA=wartość"`) albo w PowerShellu (`$env:NA
 |-|-|-|
 |`ENFUSION_MCP_SCRIPT`|ścieżka autora|Plik `dist/index.js` serwera Enfusion MCP BK|
 |`ENFUSION_GAME_PATH`|ścieżka autora|Folder zainstalowanej gry|
-|`OLLAMA_CHAT_URL`|`http://127.0.0.1:11434/api/chat`|Adres Ollamy|
+|`OLLAMA_CHAT_URL`|`http:/127.0.0.1:11434/api/chat`|Adres Ollamy|
 |`OLLAMA_MODEL`|`gpt-oss:20b`|Model domyślny (nadpisywany przez `settings.json` i `--model`)|
 
 ### Model
