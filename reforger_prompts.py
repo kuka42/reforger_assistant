@@ -240,3 +240,12 @@ HINT_KB_CHECK = (                         # {query} {files} {excerpt}
     "Jeśli wzorce pokazują inny, właściwy sposób (np. którą klasę modyfikować, gdzie dać warunek serwera, "
     "kiedy wywołać super, ile razy wykona się nadpisana metoda), popraw kod. Jeśli Twój kod jest z nimi zgodny, "
     "zostaw go. Potem napisz pełną odpowiedź od nowa.")
+
+
+# ---------------------------------------------------------------- od 1.8.1
+EMERGENCY_CODE_HEADER = ("\n\nKod z tej odpowiedzi (NIESPRAWDZONY - użytkownik mógł go skopiować i skompilować; "
+                         "to on jest punktem odniesienia przy zgłaszanych błędach):\n\n")
+API_QUERY_REWRITTEN = "zapytanie {old!r} -> {new!r} (api_search szuka po nazwie)"                    # {old} {new}
+API_CLASS_SEEN = "metoda {method} jest w wynikach także przy klasie {cls}"                            # {method} {cls}
+API_CLASS_NOT_SEEN = ("metoda {method} istnieje (w: {owners}); przy klasie {cls} nie widać jej w pokazanych "
+                      "wynikach - lista może być ucięta, sprawdź api_search(query='{cls}', type='class')")  # {method} {owners} {cls}

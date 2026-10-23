@@ -19,8 +19,8 @@ Przeglądarka  <->  lokalny serwer (Python)  <->  silnik  <->  Ollama (model)
 |-|-|
 |Windows|Używane i testowane na Windows; launchery `.cmd` są tylko dla Windows|
 |Python 3.10 lub nowszy|Tylko biblioteka standardowa, **nie trzeba nic instalować przez pip** (testowane na 3.12)|
-|Node.js w `PATH`|Uruchamia serwer MCP (`node dist_index.js`)|
-|Enfusion MCP BK|Zbudowany serwer MCP, plik `dist_index.js` -> https://github.com/steffenbk/enfusion-mcp-BK|
+|Node.js w `PATH`|Uruchamia serwer MCP (`node dist/index.js`)|
+|Enfusion MCP BK|Zbudowany serwer MCP, plik `dist/index.js` -> https://github.com/steffenbk/enfusion-mcp-BK|
 |Ollama + model z obsługą narzędzi|Testowano na `gpt-oss:20b`|
 |Arma Reforger|Zainstalowana gra (potrzebna ścieżka do jej folderu)|
 
@@ -29,11 +29,11 @@ Przykład sprzętu: RTX 4070 Ti Super 16 GB. Model `gpt-oss:20b` przy kontekści
 ## Szybki start
 
 1. Skopiuj wszystkie pliki asystenta do jednego folderu (lista w sekcji [Pliki](#pliki)).
-2. **Ustaw ścieżki.** Domyślne wartości wskazują (`D:\enfusion-mcp-BK\dist\index.js` i `D:\SteamLibrary\steamapps\common\Arma Reforger`)
+2. **Ustaw ścieżki.** Domyślne wartości wskazują (`C:\enfusion-mcp-BK\dist\index.js` i `C:\Program Files\Steam\steamapps\common\Arma Reforger`)
 W `START_ASSISTANT_WEB.cmd`, własne dopisz przed linią `python "reforger_assistant_WEB.py"`:
 
 ```bat
-   set "ENFUSION_MCP_SCRIPT=C:\ścieżka\do\enfusion-mcp-BK\dist_index.js"
+   set "ENFUSION_MCP_SCRIPT=C:\ścieżka\do\enfusion-mcp-BK\dist\index.js"
    set "ENFUSION_GAME_PATH=C:\Program Files\Steam\steamapps\common\Arma Reforger"
    ```
 
@@ -91,7 +91,7 @@ Ustawiasz je w launcherze (`set "NAZWA=wartość"`) albo w PowerShellu (`$env:NA
 
 |**Zmienna**|**Domyślnie**|**Opis**|
 |-|-|-|
-|`ENFUSION_MCP_SCRIPT`|ścieżka autora|Plik `dist\\\_index.js` serwera Enfusion MCP BK|
+|`ENFUSION_MCP_SCRIPT`|ścieżka autora|Plik `dist/index.js` serwera Enfusion MCP BK|
 |`ENFUSION_GAME_PATH`|ścieżka autora|Folder zainstalowanej gry|
 |`OLLAMA_CHAT_URL`|`http://127.0.0.1:11434/api/chat`|Adres Ollamy|
 |`OLLAMA_MODEL`|`gpt-oss:20b`|Model domyślny (nadpisywany przez `settings.json` i `--model`)|
@@ -204,7 +204,7 @@ Pytania i reguły są po polsku i dobrane pod `gpt-oss:20b`. Ocena regułowa jes
 
 |**Objaw**|**Co zrobić**|
 |-|-|
-|`Nie znaleziono serwera MCP: ...`|Popraw `ENFUSION_MCP_SCRIPT` (plik `dist_index.js` musi istnieć)|
+|`Nie znaleziono serwera MCP: ...`|Popraw `ENFUSION_MCP_SCRIPT` (plik `dist/index.js` musi istnieć)|
 |`Nie można uruchomić Node/Enfusion MCP`|Zainstaluj Node.js i upewnij się, że `node` jest w `PATH`|
 |`Ollama nie odpowiada (...)`|Uruchom Ollamę albo popraw `OLLAMA_CHAT_URL`|
 |Zmiana modelu: „nie obsługuje wywoływania narzędzi”|Wybierz model z obsługą narzędzi|

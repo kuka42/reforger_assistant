@@ -481,3 +481,16 @@ def _kb_excerpt(text: str, query: str, cap: int = KB_CHECK_CAP) -> tuple[str, li
         out.append(sec)
         used += len(sec) + 2
     return "\n\n".join(out), titles
+
+
+# ---------------------------------------------------------------- od 1.8.1
+def _fenced_code_blocks(text: str, cap: int) -> str:
+    """Wszystkie bloki kodu z odpowiedzi w oryginalnej postaci (z językiem), łącznie do cap znaków."""
+    out, used = [], 0
+    for m in re.finditer(r"```[^\n]*\n.*?```", text or "", re.S):
+        block = m.group(0)
+        if used + len(block) > cap:
+            break
+        out.append(block)
+        used += len(block) + 2
+    return "\n\n".join(out)

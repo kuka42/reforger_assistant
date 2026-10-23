@@ -82,8 +82,12 @@ def history_from_turns(turns: list[dict]) -> list[dict]:
             if nxt is None or nxt["role"] == "user":
                 continue
         content = turn["content"]
-        if turn["role"] == "assistant" and placeholder and not keep and is_emergency_answer(content):
-            content = placeholder
+        if turn["role"] == "assistant" and is_emergency_answer(content):
+            entry = getattr(engine, "_emergency_history_entry", None)
+            if callable(entry):                 # od 1.8.1: znacznik + kod z odpowiedzi (jak w silniku)
+                content = entry(content)["content"]
+            elif placeholder and not keep:
+                content = placeholder
         out.append({"role": turn["role"], "content": content})
     return [{"role": "system", "content": engine.SYSTEM_PROMPT}] + out
 

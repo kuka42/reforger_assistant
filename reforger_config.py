@@ -4,14 +4,14 @@ from __future__ import annotations
 import os
 
 
-VERSION = "1.8.0-kb"
+VERSION = "1.8.1-fixes"
 
 # Ścieżki potwierdzone podczas poprzednich testów użytkownika — edytowalne.
 MCP_SCRIPT = os.environ.get(
-    "ENFUSION_MCP_SCRIPT", r"D:\enfusion-mcp-BK\dist\index.js"
+    "ENFUSION_MCP_SCRIPT", r"C:\enfusion-mcp-BK\dist\index.js"
 )
 GAME_PATH = os.environ.get(
-    "ENFUSION_GAME_PATH", r"D:\SteamLibrary\steamapps\common\Arma Reforger"
+    "ENFUSION_GAME_PATH", r"C:\Program Files\Steam\steamapps\common\Arma Reforger"
 )
 
 def _env_int(name: str, default: int) -> int:

@@ -66,6 +66,10 @@ try:
         config_summary,
     )
     from reforger_prompts import (  # noqa: F401
+        EMERGENCY_CODE_HEADER,
+        API_QUERY_REWRITTEN,
+        API_CLASS_SEEN,
+        API_CLASS_NOT_SEEN,
         HINT_KB_CHECK,
         HINT_COMPILE_LINES,
         COMPILE_LINE_FOUND,
@@ -104,6 +108,12 @@ try:
         FOOTER_API,
     )
     from reforger_rules import (  # noqa: F401
+        API_QUERY_BUILTIN_TYPES,
+        API_CLASS_METHOD_QUERY_RE,
+        API_QUERY_KEYWORDS,
+        COMPILE_LOOKUP_MAX,
+        COMPILE_LINES_MAX,
+        EMERGENCY_CODE_CAP,
         KB_CHECK_MAX_FILES,
         TOOL_ACTION_LIMITS,
         TOOL_DROP_ARGS,
@@ -137,6 +147,7 @@ try:
         _API_CODE_BLOCK_RE,
     )
     from reforger_checks import (  # noqa: F401
+        _fenced_code_blocks,
         _own_code_blocks,
         _kb_query_from_code,
         _kb_excerpt,
@@ -466,7 +477,10 @@ def _emergency_history_entry(content: str) -> dict:
     """Wpis do historii modelu dla odpowiedzi awaryjnej (patrz REFORGER_EMERGENCY_IN_HISTORY)."""
     if EMERGENCY_IN_HISTORY == "keep":
         return {"role": "assistant", "content": content}
-    return {"role": "assistant", "content": EMERGENCY_PLACEHOLDER}
+    # Proza z niezweryfikowanymi twierdzeniami znika, ale kod zostaje: użytkownik mógł go skompilować
+    # i za chwilę zgłosić błędy (mapowanie linii z komunikatu kompilatora szuka właśnie tego kodu).
+    code = _fenced_code_blocks(content, EMERGENCY_CODE_CAP)
+    return {"role": "assistant", "content": EMERGENCY_PLACEHOLDER + (EMERGENCY_CODE_HEADER + code if code else "")}
 
 
 def _compile_error_lookup(question: str, meta: dict, mcp, messages: list | None = None) -> dict | None:
@@ -477,11 +491,13 @@ def _compile_error_lookup(question: str, meta: dict, mcp, messages: list | None 
     if not found:
         return {"role": "user", "content": line_hint} if line_hint else None
     parts = []
-    for sym in found[:3]:
+    checked: set[str] = set()
+    for sym in found:
         meta["banned"].add(sym)
         meth = sym.replace("::", ".").split(".")[-1]
-        if "api_search" not in getattr(mcp, "tools", {}):
+        if meth in checked or len(checked) >= COMPILE_LOOKUP_MAX or "api_search" not in getattr(mcp, "tools", {}):
             continue
+        checked.add(meth)
         args = {"query": meth, "type": "method", "limit": 10}
         try:
             result = mcp.call_tool("api_search", args)
@@ -503,7 +519,7 @@ def _compile_line_hint(question: str, meta: dict, mcp, messages: list | None) ->
     if not errors:
         return ""
     blocks = []
-    for path, line, message in errors[:3]:
+    for path, line, message in errors[:COMPILE_LINES_MAX]:
         hit = _code_line_excerpt(messages or [], path, line)
         print(f"  [KOD] błąd kompilatora: {path}({line}) - "
               + ("linia znaleziona w ostatnim kodzie" if hit else "linii nie ma w ostatnim kodzie"), flush=True)
@@ -1064,6 +1080,20 @@ def _ask_impl(question: str, messages: list[dict], mcp: MCPStdioClient,
                 # nieznane argumenty, typy i limity wg prawdziwego schematu z tools/list.
                 model_title = arguments.get("title") if isinstance(arguments, dict) else None
                 fixed_name, fixed_args, notes = repair_tool_call(name, arguments, mcp.tools)
+                class_hint = None
+                if fixed_name == "api_search" and isinstance(fixed_args.get("query"), str):
+                    m = API_CLASS_METHOD_QUERY_RE.match(fixed_args["query"])
+                    if m:
+                        first, second = m.groups()
+                        old_query = fixed_args["query"]
+                        if first.lower() in API_QUERY_KEYWORDS:
+                            fixed_args["query"] = second
+                        elif (second[0].isupper() and (first[0].isupper() or first in API_QUERY_BUILTIN_TYPES)
+                              and str(fixed_args.get("type", "any")).lower() in ("method", "any", "property")):
+                            fixed_args["query"] = second
+                            class_hint = first
+                        if fixed_args["query"] != old_query:
+                            notes.append(API_QUERY_REWRITTEN.format(old=old_query, new=fixed_args["query"]))
                 if fixed_name in TOOL_DROP_ARGS:
                     for dropped in TOOL_DROP_ARGS[fixed_name]:
                         fixed_args.pop(dropped, None)
@@ -1200,6 +1230,13 @@ def _ask_impl(question: str, messages: list[dict], mcp: MCPStdioClient,
                             else:
                                 searches.append(f"{name}({arguments.get('query', arguments.get('path', ''))})")
                         print(f"  -> {'BŁĄD' if is_error else 'ok'} {len(response)} zn.", flush=True)
+                        if class_hint and not is_error:
+                            method = arguments.get("query", "")
+                            owners = list(dict.fromkeys(re.findall(rf"^\s*\d+\.\s*(\w+)\.[^\n]*\b{re.escape(method)}\s*\(", raw, re.M)))
+                            if class_hint in owners:
+                                notes.append(API_CLASS_SEEN.format(method=method, cls=class_hint))
+                            elif owners:
+                                notes.append(API_CLASS_NOT_SEEN.format(method=method, owners=", ".join(owners[:5]), cls=class_hint))
                         if notes:
                             response += "\n[korekta wywołania: " + "; ".join(notes) + "]"
             except (MCPError, ValueError, TypeError, json.JSONDecodeError) as exc:

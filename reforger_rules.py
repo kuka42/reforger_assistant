@@ -139,3 +139,13 @@ KB_CHECK_CAP = 5000                       # znaków wzorców w podpowiedzi
 KB_CHECK_DROP_WORDS = ("scr", "class")    # słowa z nazw klas pomijane w zapytaniu do bazy
 # Sekcje plików bazy pokazywane najpierw: reguły, pułapki, struktura podstawowa, dobre praktyki.
 KB_CHECK_PRIORITY_RE = re.compile(r"rule|pitfall|basic|structure|best|key|modd", re.I)
+
+
+# ---------------------------------------------------------------- od 1.8.1
+# api_search z zapytaniem "Klasa Metoda" (np. "IEntity GetOrigin"): BK szuka i tak po nazwie metody.
+API_CLASS_METHOD_QUERY_RE = re.compile(r"^\s*([A-Za-z_]\w*)\s+([A-Za-z_]\w*)\s*$")
+API_QUERY_KEYWORDS = ("class", "enum", "struct", "method", "function")   # "class Game" -> "Game"
+API_QUERY_BUILTIN_TYPES = ("vector", "string", "array", "map", "set", "float", "int", "bool")  # "vector Distance"
+COMPILE_LOOKUP_MAX = 6                   # ile różnych metod z błędów kompilatora sprawdzać automatycznie
+COMPILE_LINES_MAX = 6                    # ile błędów z numerem linii pokazywać
+EMERGENCY_CODE_CAP = 12000               # ile znaków kodu z odpowiedzi awaryjnej zostaje w kontekście
