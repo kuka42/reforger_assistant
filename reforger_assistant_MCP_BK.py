@@ -66,6 +66,17 @@ try:
         config_summary,
     )
     from reforger_prompts import (  # noqa: F401
+        NOTE_GLOBAL_FUNCTION,
+        NOTE_GLOBAL_OWNERS,
+        QUESTION_FILES_NOTE,
+        NOTE_PARENTS,
+        TOOL_BROWSE_PATTERN,
+        TOOL_CONTENT_SEARCH,
+        HINT_QUOTE_FIX,
+        TOOL_ASSET_CODE_QUERY,
+        API_EXACT_CLASS_NOTE,
+        HINT_FINAL_NO_TOOLS,
+        FOOTER_STOPPED,
         EMERGENCY_CODE_HEADER,
         API_QUERY_REWRITTEN,
         API_CLASS_SEEN,
@@ -108,6 +119,23 @@ try:
         FOOTER_API,
     )
     from reforger_rules import (  # noqa: F401
+        API_GLOBAL_FUNCTIONS,
+        GAME_BROWSE_PATTERN_RE,
+        CONTENT_SEARCH_ALIASES,
+        QUESTION_FILES_MAX,
+        QUESTION_NAME_RE,
+        VERIFY_NO_FIX_MARKERS,
+        GAME_BROWSE_ANY_PATTERNS,
+        ASSET_QUERY_CODE_RE,
+        API_EXACT_CLASS_RE,
+        SYNTH_BUDGET_CHARS,
+        SYNTH_ITEM_MAX_CHARS,
+        PARENT_RESOLVE_DEPTH,
+        PARENT_RESOLVE_PER_TURN,
+        PARENT_NOTE_MAX_NAMES,
+        PARENT_NOTE_CAP,
+        _CLASS_DECL_RE,
+        _CLASS_ROOT_RE,
         API_QUERY_BUILTIN_TYPES,
         API_CLASS_METHOD_QUERY_RE,
         API_QUERY_KEYWORDS,
@@ -178,6 +206,14 @@ try:
         _find_class_method,
         _api_problems,
         _api_footer,
+        _game_classes,
+        _decl_items,
+        _record_view_lines,
+        _line_ref_stats,
+        _line_ref_problems,
+        _quote_problems,
+        _decl_target,
+        _class_known,
     )
     from reforger_mcp import (  # noqa: F401
         MCPError,
@@ -212,6 +248,8 @@ def compact_finished_history(messages: list[dict]) -> None:
     Służy WYŁĄCZNIE historii w pamięci procesu. WEB zapisuje tylko user/assistant
     i metadane wywołań, nigdy surowe odpowiedzi MCP.
     """
+    # Od 1.8.3: odrzucone szkice i podpowiedzi rund poprawkowych są potrzebne tylko w obrębie tury.
+    messages[:] = [m for m in messages if not m.get("_draft")]
     for item in messages:
         if item.get("role") == "assistant":
             # thinking należy zachować podczas wykonywania sekwencji tool calls;
@@ -290,6 +328,47 @@ def _digest_prefab(text: str) -> str:
     return "\n".join(out)
 
 
+def _looks_like_api(text: str) -> bool:
+    body = _strip_note(text)
+    return bool(re.search(r"^##\s+[A-Za-z_]\w*\s*$", body, re.M) and re.search(r"^###\s", body, re.M))
+
+
+def _shrink_api(text: str, size: int) -> str:
+    """Wynik api_search (od 1.8.3): najpierw znikają opisy metod (' -- ...'), potem metody dziedziczone
+    zwijają się do nazw; sygnatury własnych metod klasy zostają. Na końcu dopiero jawny wyciąg."""
+    body = _strip_note(text)
+    first, rest = (body.split("\n", 1) + [""])[:2] if body.startswith("[") else ("", body)
+    steps = []
+    rest = re.sub(r"^(\s*-\s[^\n]*?) -- [^\n]*$", r"\1", rest, flags=re.M)
+    steps.append("usunięto opisy metod")
+    if len(first) + len(rest) > size:
+        out, group = [], None
+        for line in rest.split("\n"):
+            m = re.match(r"^####\s+(\S.*)$", line)
+            if m and not m.group(1).startswith("Inherited"):
+                group = [m.group(1).strip(), []]
+                out.append(group)
+                continue
+            if group is not None:
+                n = re.match(r"^\s*-\s[^\n(]*?\b([A-Za-z_]\w*)\s*\(", line)
+                if n:
+                    group[1].append(n.group(1))
+                    continue
+                if line.strip() and not line.startswith("  ..."):
+                    group = None
+                else:
+                    continue
+            out.append(line)
+        rest = "\n".join(f"#### {g[0]}: " + ", ".join(g[1]) if isinstance(g, list) else g for g in out)
+        steps.append("metody dziedziczone zwinięte do nazw")
+    if len(first) + len(rest) > size:
+        rest = re.sub(r"^(\s*-\s)(?:proto\s+)?(?:external\s+|native\s+)", r"\1", rest, flags=re.M)
+        steps.append("bez słów 'proto external'")
+    note = "[SKRÓT WYNIKU API: " + ", ".join(steps) + "]\n"
+    result = (first + "\n" if first else "") + rest
+    return note + (result if len(result) + len(note) <= size else _excerpt(result, max(500, size - len(note))))
+
+
 def _shrink(text: str, size: int) -> str:
     """Skraca wynik do ~size znaków. Kod .c: zostają WSZYSTKIE deklaracje.
     Reszta: jawnie oznaczony wyciąg (_excerpt)."""
@@ -311,6 +390,8 @@ def _shrink(text: str, size: int) -> str:
             if len(candidate) <= size:
                 return note + candidate
         return note + _excerpt(digest_enforce(body, keep_docs=False), size)
+    if _looks_like_api(text) and not text.startswith("[SKRÓT WYNIKU API"):
+        return _shrink_api(text, size)
     return _excerpt(text, size)
 
 
@@ -399,8 +480,9 @@ def _body_lines(raw: str):
     """Linie pliku BEZ trzylinijkowego nagłówka dopisywanego przez game_read (ścieżka, rozmiar, pusta linia).
     Dzięki temu numery w widoku odpowiadają numerom w pliku."""
     lines = raw.split("\n")
-    if (len(lines) >= 3 and lines[0].startswith("//") and "(from .pak)" in lines[0]
-            and lines[1].startswith("//") and "bytes" in lines[1] and lines[2].strip() == ""):
+    # Nagłówek BK: "// ścieżka (from .pak)" albo "// ścieżka" (plik luzem, od 1.8.4), potem "// N bytes" i pusta linia.
+    if (len(lines) >= 3 and lines[0].startswith("//") and re.match(r"^//\s*\d+\s+bytes\s*$", lines[1])
+            and lines[2].strip() == ""):
         return lines[3:], 3
     return lines, 0
 
@@ -547,6 +629,239 @@ def _compile_line_hint(question: str, meta: dict, mcp, messages: list | None) ->
     return HINT_COMPILE_LINES.format(errors="\n\n".join(blocks), kb=kb, project=project)
 
 
+# ---------------------------------------------------------------- klasy bazowe z plików gry (od 1.8.2)
+# Hierarchia klas w danych API BK jest niewiarygodna: prawie połowa klas Arma nie ma klasy bazowej
+# (np. ArmaReforgerScripted, ChimeraWorld, TimeAndWeatherManagerEntity), a u wielu przodkowie trafili do listy
+# "Direct subclasses" (np. SCR_ToggleSafetyUserAction: "Inherits from: BaseUserAction", "Direct subclasses:
+# ScriptedUserAction, SCR_InventoryAction, SCR_InspectionUserAction" - to są jej przodkowie). Silnik czyta
+# deklarację "class X : Y" z pliku gry (asset_search po dokładnej nazwie pliku + game_read) i idzie w górę.
+# Pamięć podręczna na czas działania procesu: pliki gry się nie zmieniają.
+_CLASS_RESULTS: dict[str, str] = {}                     # klasa -> surowy wynik api_search(type=class, limit=1) albo ""
+_PARENT_CACHE: dict[str, tuple[list[str], str]] = {}    # klasa -> (przodkowie od najbliższego, plik z deklaracją)
+
+
+def _class_section(raw: str, name: str) -> str:
+    """Sekcja '## Klasa' wyniku api_search (do następnego '## '), razem z podsekcjami '#### Przodek'."""
+    m = re.search(rf"^##\s+{re.escape(name)}\s*$(.*?)(?=^##\s|\Z)", raw or "", re.M | re.S)
+    return m.group(1) if m else ""
+
+
+def _bk_parent(section: str) -> str:
+    m = re.search(r"^Inherits from:\s*([A-Za-z_]\w*)", section, re.M)
+    return m.group(1) if m else ""
+
+
+def _class_result(mcp, name: str) -> str:
+    """Pełny widok jednej klasy z api_search (limit=1 daje szczegóły i metody dziedziczone). Tylko dokładna nazwa."""
+    if name in _CLASS_RESULTS:
+        return _CLASS_RESULTS[name]
+    raw = ""
+    try:
+        result = mcp.call_tool("api_search", {"query": name, "type": "class", "limit": 1})
+        text = _raw_text(result)
+        if not result.get("isError") and _class_section(text, name):
+            raw = text
+    except (MCPError, OSError, ValueError, TypeError) as exc:
+        print(f"  [BAZA] api_search('{name}') nieudane: {exc!r}", flush=True)
+    _CLASS_RESULTS[name] = raw
+    return raw
+
+
+def _stub_parent(mcp, name: str) -> tuple[str | None, str]:
+    """(klasa bazowa, plik) z deklaracji 'class Nazwa : Baza' w pliku gry o nazwie Nazwa.c. Nie zgaduje plików:
+    tylko dokładna nazwa pliku z asset_search. (None, plik) = klasa bez bazowej; (None, '') = nie ustalono."""
+    try:
+        listing = _raw_text(mcp.call_tool("asset_search", {"query": name, "type": "script", "limit": 10}))
+    except (MCPError, OSError, ValueError, TypeError):
+        return None, ""
+    paths = [re.sub(r"^\{[0-9A-Fa-f]{16}\}", "", m.group(1))
+             for m in re.finditer(r"^\s{2,}(\S+/\S+)\s*$", listing, re.M)]
+    exact = [p for p in paths if p.rsplit("/", 1)[-1].lower() == name.lower() + ".c"]
+    exact.sort(key=lambda p: "/generated/" not in p.lower())      # najpierw deklaracje API (proto external)
+    decl = re.compile(_CLASS_DECL_RE.format(name=re.escape(name)), re.M)
+    root = re.compile(_CLASS_ROOT_RE.format(name=re.escape(name)), re.M)
+    for path in exact[:2]:
+        try:
+            result = mcp.call_tool("game_read", {"path": path})
+        except (MCPError, OSError, ValueError, TypeError):
+            continue
+        if result.get("isError"):
+            continue
+        text = _raw_text(result)
+        m = decl.search(text)
+        if m:
+            return m.group(1), path
+        if root.search(text):
+            return None, path
+    return None, ""
+
+
+def _ancestors(mcp, meta: dict, name: str) -> tuple[list[str], str]:
+    """Łańcuch klas bazowych (od najbliższej) z deklaracji w plikach gry. Gdy pliku klasy nie ma
+    (nazwa pliku inna niż nazwa klasy), łańcuch kończy się na ostatniej ustalonej klasie.
+    Limit nowych klas na turę: meta['resolve_budget']; wynik (także pusty) zostaje w pamięci podręcznej."""
+    if name in _PARENT_CACHE:
+        return _PARENT_CACHE[name]
+    if meta.get("resolve_budget", 0) <= 0:
+        return [], ""
+    meta["resolve_budget"] -= 1
+    chain: list[str] = []
+    first_path = ""
+    current = name
+    for depth in range(PARENT_RESOLVE_DEPTH):
+        parent, path = _stub_parent(mcp, current)
+        if depth == 0:
+            first_path = path
+        if not parent or parent == name or parent in chain:
+            break
+        chain.append(parent)
+        current = parent
+    _PARENT_CACHE[name] = (chain, first_path)
+    print(f"  [BAZA] {name}: klasy bazowe z pliku gry {first_path or '?'} -> {' : '.join(chain) or 'nie ustalono'}",
+          flush=True)
+    return chain, first_path
+
+
+def _use_chain(meta: dict, mcp, name: str, chain: list[str]) -> None:
+    """Łańcuch do kontroli API + pełne wyniki przodków jako dowody (model nie widzi ich w całości)."""
+    meta.setdefault("chains", {})[name] = chain
+    added = meta.setdefault("chain_evidence", set())
+    for cls in chain:
+        raw = _class_result(mcp, cls)
+        if raw and cls not in added:
+            added.add(cls)
+            _add_evidence(meta, raw)
+
+
+def _member_names(section: str) -> list[str]:
+    return list(dict.fromkeys(re.findall(r"^\s*-\s*[^\n(]*?\b([A-Za-z_]\w*)\s*\(", section, re.M)))
+
+
+def _parents_note(mcp, meta: dict, query, raw: str) -> str:
+    """Dopisek do wyniku api_search dla dokładnie szukanej klasy, gdy łańcuch z pliku gry różni się
+    od danych BK (brak klasy bazowej albo inna klasa bazowa)."""
+    q = _norm_query(query)
+    if not re.fullmatch(r"[A-Za-z_]\w*", q or ""):
+        return ""
+    section = _class_section(raw, q)
+    if not section:
+        return ""
+    chain, path = _ancestors(mcp, meta, q)
+    if not chain:
+        return ""
+    _use_chain(meta, mcp, q, chain)
+    bk = _bk_parent(section)
+    if bk == chain[0]:
+        return ""                     # BK zgadza się z plikiem gry: nic nie dopisujemy
+    seen = set(_member_names(section))
+    lines = []
+    for cls in chain:
+        names = [n for n in _member_names(_class_section(_CLASS_RESULTS.get(cls, ""), cls)) if n not in seen]
+        if names:
+            seen.update(names)
+            more = f" (+{len(names) - PARENT_NOTE_MAX_NAMES})" if len(names) > PARENT_NOTE_MAX_NAMES else ""
+            lines.append(f"- {cls}: " + ", ".join(names[:PARENT_NOTE_MAX_NAMES]) + more)
+    note = NOTE_PARENTS.format(name=q, path=path or "?", chain=f"{q} : " + " : ".join(chain),
+                               bk=(f"'Inherits from: {bk}'" if bk else "brak klasy bazowej"),
+                               members="\n".join(lines) or "- (brak danych o metodach)", first=chain[0])
+    return note if len(note) <= PARENT_NOTE_CAP else note[:PARENT_NOTE_CAP - 40] + "\n[... lista skrócona]]"
+
+
+def _prepare_api_evidence(content: str, meta: dict, session_files: dict, mcp) -> None:
+    """Przed kontrolą API: dla Klasa.Metoda i GetGame().Metoda, których nie ma w dowodach, silnik sam pobiera
+    pełny widok klasy i jej przodków (z deklaracji w plikach gry). Model tych wyników nie widzi."""
+    if "api_search" not in getattr(mcp, "tools", {}):
+        return
+    meta.setdefault("chains", {})
+
+    def classes_for(target: str) -> list[str]:
+        return (_game_classes(meta) if target == "ArmaReforgerScripted"
+                else [target] + meta["chains"].get(target, []))
+
+    def missing(target: str, methods: list[str]) -> list[str]:
+        texts = _evidence_texts(meta, session_files)
+        return [m for m in methods if not any(_find_class_method(texts, c, m)[0] for c in classes_for(target))]
+
+    def add(cls: str) -> str:
+        raw = _class_result(mcp, cls)
+        added = meta.setdefault("chain_evidence", set())
+        if raw and cls not in added:
+            added.add(cls)
+            _add_evidence(meta, raw)
+        return raw
+
+    targets: dict[str, list[str]] = {}
+    for cls, meth, kind in _api_calls(content):
+        if kind == "game":
+            targets.setdefault("ArmaReforgerScripted", []).append(meth)
+        elif kind == "static":
+            targets.setdefault(cls, []).append(meth)
+    decl_classes: set[str] = set()
+    items = _decl_items(content)
+    own = {it[0] for it in items if not it[2]}
+    for cls, base, modded, overrides, implicit in items:   # od 1.8.3: class X : Y, modded class X, override
+        target = _decl_target(cls, base, modded, own)
+        if target:
+            decl_classes.add(target)
+            targets.setdefault(target, []).extend(overrides + implicit)   # od 1.8.6: także wywołania bez obiektu
+    targets = {t: ms for t, ms in targets.items()
+               if missing(t, ms) or (t in decl_classes and not _class_known(_evidence_texts(meta, session_files), t))}
+    for target, methods in list(targets.items())[:PARENT_RESOLVE_PER_TURN]:
+        if not add(target) and target != "ArmaReforgerScripted":
+            continue                  # klasy nie ma w API: nie szukamy jej przodków w plikach gry
+        if not missing(target, methods):
+            continue
+        if target not in meta["chains"]:
+            chain, _ = _ancestors(mcp, meta, target)
+            if chain:
+                _use_chain(meta, mcp, target, chain)
+        if target == "ArmaReforgerScripted" and missing(target, methods):
+            # Obiekt gry: plik ArmaReforgerScripted.c może nie istnieć; sprawdzamy stałą listę klas gry.
+            for cls in _game_classes(meta)[1:]:
+                add(cls)
+
+
+def _final_check_footer(content: str, meta: dict, session_files: dict, mcp, where: str) -> str:
+    """Kontrola API i składni dla odpowiedzi bez rundy poprawkowej (synteza awaryjna, ponowienie bez narzędzi).
+    Wcześniej takie odpowiedzi omijały kontrole. Zwraca stopkę (tryb fix) albo pusty tekst."""
+    if API_CHECK_MODE == "off" or not content:
+        return ""
+    try:
+        _prepare_api_evidence(content, meta, session_files, mcp)
+        problems = _api_problems(content, meta, session_files)
+        syntax = _syntax_problems(content)
+    except Exception as exc:  # kontrola nigdy nie psuje odpowiedzi
+        print(f"  [API] kontrola ({where}) pominięta z powodu błędu: {exc!r}", flush=True)
+        return ""
+    if problems:
+        print(f"  [API] ({where}) niepotwierdzone: " + "; ".join(problems), flush=True)
+    if syntax:
+        print(f"  [KOD] ({where}) niedozwolona składnia: " + "; ".join(syntax), flush=True)
+    if API_CHECK_MODE != "fix":
+        return ""
+    return (_api_footer(problems) if problems else "") + (
+        FOOTER_SYNTAX.format(problems="; ".join(syntax)) if syntax else "")
+
+
+def _question_files_note(question: str, mcp) -> str:
+    """Od 1.8.6: nazwy z pytania (np. Weapon_Base, SCR_ToggleSafetyUserAction), dla których w grze jest plik o DOKŁADNIE
+    takiej nazwie, silnik podaje modelowi od razu (test A: pytanie o Weapon_Base, a model nie otworzył tego pliku).
+    Tylko dokładne nazwy plików z asset_search; niczego nie zgadujemy."""
+    if "asset_search" not in getattr(mcp, "tools", {}):
+        return ""
+    names = list(dict.fromkeys(re.findall(QUESTION_NAME_RE, question or "")))[:QUESTION_FILES_MAX]
+    found = []
+    for name in names:
+        listing = _raw_text(mcp.call_tool("asset_search", {"query": name, "type": "any", "limit": 10}))
+        paths = [re.sub(r"^\{[0-9A-Fa-f]{16}\}", "", m.group(1)) for m in re.finditer(r"^\s{2,}(\S+/\S+)\s*$", listing, re.M)]
+        exact = [p for p in paths if p.rsplit("/", 1)[-1].rsplit(".", 1)[0].lower() == name.lower()
+                 and p.rsplit(".", 1)[-1].lower() in ("c", "et", "conf", "layout")]
+        if exact:
+            found.append(f"{name} -> {', '.join(exact[:2])}")
+    print(f"  [PYTANIE] nazwy z pytania: {', '.join(names) or '-'}; pliki: {'; '.join(found) or 'brak dokładnych'}", flush=True)
+    return QUESTION_FILES_NOTE.format(files="; ".join(found)) if found else ""
+
+
 def _suggest_paths(mcp, path: str) -> str:
     """Po nieudanym game_read: deterministycznie szukamy prawdziwej ścieżki po nazwie pliku."""
     if "asset_search" not in mcp.tools or not path:
@@ -570,7 +885,9 @@ def _is_source_result(text: str, tool_name: str = "") -> bool:
     """Odczyt pliku/wiki (wysoka wartość) vs. wynik wyszukiwania (niska wartość)."""
     first = _strip_note(text).split("\n", 1)[0]
     # Lokalny widok pliku (query / zakres linii) to też odczyt pliku, a nie wynik wyszukiwania.
-    return ((first.startswith("//") and "(from .pak)" in first) or first.startswith("[Widok lokalny")
+    # Od 1.8.4 także plik luzem: nagłówek "// ścieżka/plik.ext" bez "(from .pak)".
+    return ((first.startswith("//") and ("(from .pak)" in first or re.match(r"^//\s+\S+/\S+\.\w{1,8}\s*$", first)))
+            or first.startswith("[Widok lokalny")
             or tool_name in ("wiki_read", "wb_knowledge", "project", "prefab"))
 
 
@@ -659,6 +976,9 @@ def _exact_match_note(name: str, arguments: dict | None, text: str) -> str:
     q = _norm_query((arguments or {}).get("query"))
     if not q:
         return ""
+    if name == "api_search" and q in API_GLOBAL_FUNCTIONS:
+        # Od 1.8.2: funkcji globalnych nie ma w indeksie api_search; "brak trafienia" nie może znaczyć "nie istnieje".
+        return NOTE_GLOBAL_FUNCTION.format(name=q, info=API_GLOBAL_FUNCTIONS[q])
     if name == "api_search":
         classes: list[str] = []
         methods: list[tuple[str, str]] = []      # (klasa, składowa): metody i właściwości
@@ -720,7 +1040,12 @@ def tool_text(result: dict, name: str = "", arguments: dict | None = None) -> st
         content = _dedupe_api_result(content)
     if not result.get("isError"):
         note = _exact_match_note(name, arguments, content)
-        if note:
+        if note.startswith("[Funkcja globalna"):
+            # Od 1.8.5: wyniki to metody klas testowych o tej samej nazwie (SCR_AutotestCaseBase.PrintFormat);
+            # model brał je za sposób logowania i tworzył obiekt klasy testowej. Zostaje notatka i lista klas.
+            owners = list(dict.fromkeys(re.findall(r"^\s*(?:\d+\.\s*|\*\*Method:\*\*\s*)(\w+)\.", content, re.M)))
+            content = note + (NOTE_GLOBAL_OWNERS.format(owners=", ".join(owners[:6])) if owners else "")
+        elif note:
             content = note + "\n" + content
     if len(content) > MAX_TOOL_RESULT_CHARS:
         content = _shrink(content, MAX_TOOL_RESULT_CHARS)
@@ -728,6 +1053,7 @@ def tool_text(result: dict, name: str = "", arguments: dict | None = None) -> st
 
 
 def ollama_chat(messages: list[dict], tools: list[dict], model: str, num_ctx: int, think: str | None = None) -> dict:
+    messages = [{k: v for k, v in m.items() if not str(k).startswith("_")} for m in messages]
     payload = {"model": model, "messages": messages, "stream": False,
                "options": {"temperature": OLLAMA_TEMPERATURE, "num_ctx": num_ctx}}
     if OLLAMA_NUM_PREDICT > 0:
@@ -765,10 +1091,18 @@ def prune_history(messages: list[dict]) -> None:
         if len(messages) < 3:
             return
         next_user = next((i for i in range(2, len(messages))
-                          if messages[i].get("role") == "user"), None)
+                          if messages[i].get("role") == "user" and not messages[i].get("_draft")), None)
         if next_user is None:
             return
         del messages[1:next_user]
+
+
+def _is_negative_result(text: str) -> bool:
+    """Wynik bez nowej informacji: brak trafienia, pusty widok, odrzucona powtórka."""
+    t = text.lstrip()
+    return (t.startswith(("[BRAK DOKŁADNEGO TRAFIENIA", "Ten wynik już masz", "No wiki page found", "BŁĄD"))
+            or bool(re.match(r"No (?:\w+ )?(?:assets|classes|methods|enums|properties|results|wiki)", t))
+            or "Brak dopasowań dla" in t[:400])
 
 
 def _synthesize_after_mcp_limit(question: str, messages: list[dict],
@@ -780,7 +1114,7 @@ def _synthesize_after_mcp_limit(question: str, messages: list[dict],
     zamiast ponawiać wywołania. Błędy wywołań nie są traktowane jako dowody.
     """
     qpos = next((i for i in range(len(messages) - 1, -1, -1)
-                 if messages[i].get("role") == "user"), 0)
+                 if messages[i].get("role") == "user" and not messages[i].get("_draft")), 0)
     history = [
         {"role": item["role"], "content": item["content"]}
         for item in messages[1:qpos]
@@ -794,18 +1128,21 @@ def _synthesize_after_mcp_limit(question: str, messages: list[dict],
         and isinstance(item.get("content"), str)
         and not item["content"].lstrip().startswith((
             "BŁĄD:", "BŁĄD NARZĘDZIA", "BŁĄD NARZĘDZIA MCP:"))
+        and not _is_negative_result(item["content"])
     ]
-    # Zachowujemy pierwsze i ostatnie źródła, bez forsowania nazwy konkretnej
-    # mechaniki (paliwo, broń itd.). Wyrzucamy środkowe, gdy wyników jest dużo.
-    selected = entries if len(entries) <= 12 else entries[:4] + entries[-8:]
+    # Od 1.8.3: wybór według wartości, nie według pozycji (wcześniej: pierwsze 4 + ostatnie 8, po 3500 znaków;
+    # dokładne trafienie ze środka tury wypadało). Najpierw odczyty plików i dokładne trafienia, w kolejności tury.
+    valuable = [it for it in entries if _is_source_result(it["content"], it.get("tool_name", ""))
+                or it["content"].lstrip().startswith("[Dokładne trafienie")]
+    selected = valuable + [it for it in entries if it not in valuable]
     chunks = []
-    remaining = 23000
+    remaining = SYNTH_BUDGET_CHARS
     for item in selected:
-        if remaining <= 0:
+        if remaining <= 300:
             break
         name = str(item.get("tool_name") or "MCP")
         content = item["content"]
-        section = f"[{name}]\n" + _shrink(content, min(3500, remaining))
+        section = f"[{name}]\n" + _shrink(content, min(SYNTH_ITEM_MAX_CHARS, remaining))
         chunks.append(section)
         remaining -= len(section)
     if not chunks:
@@ -832,6 +1169,74 @@ def _synthesize_after_mcp_limit(question: str, messages: list[dict],
     return SYNTH_FAILED.format(cause=cause)
 
 
+def _final_without_tools(messages: list[dict], model: str, num_ctx: int, hint: str,
+                         thinks: tuple = (None, "low"), label: str = "") -> str:
+    """Od 1.8.3: końcowa odpowiedź w TEJ SAMEJ rozmowie (pełny kontekst tury, własne rozumowanie modelu),
+    tylko bez narzędzi. Wcześniej po limicie budowano nową, okrojoną rozmowę z wybranych wyników."""
+    for think in thinks:
+        try:
+            r = ollama_chat(messages + [{"role": "user", "content": hint}], [], model, num_ctx, think=think)
+        except RuntimeError as exc:
+            print(f"  [KONIEC] odpowiedź bez narzędzi ({label}) nieudana: {exc}", flush=True)
+            continue
+        reason = r.pop("_done_reason", "")
+        r.pop("_prompt_eval_count", None)
+        tokens = r.pop("_eval_count", None)
+        content = str(r.get("content") or "").strip()
+        print(f"  [KONIEC] odpowiedź bez narzędzi ({label}, think={think or '-'}): reason={reason or '?'} "
+              f"output_tokens={tokens} tekst={len(content)} zn.", flush=True)
+        if content and reason not in ("length", "max_tokens") and not _is_incomplete_answer(content):
+            return content
+    return ""
+
+
+def _finish_without_tools(question: str, messages: list[dict], model: str, num_ctx: int, cause: str, hint: str,
+                          thinks: tuple, stopped: bool, meta: dict, session_files: dict, mcp, phase) -> str:
+    """Zakończenie tury bez dalszych narzędzi: najpierw odpowiedź w tej samej rozmowie; synteza awaryjna
+    z wybranych wyników tylko wtedy, gdy model dwa razy nie odda kompletnego tekstu."""
+    phase("Kończę bez dalszych wyszukiwań - odpowiedź z zebranych wyników")
+    content = _final_without_tools(messages, model, num_ctx, hint, thinks, cause)
+    if content and VERIFY_MODE == "fix":
+        # Od 1.8.5: także ta odpowiedź przechodzi kontrolę cytatów; poprawka (bez narzędzi) tylko, gdy jest lepsza.
+        try:
+            quote = _quote_problems(content, meta, session_files)
+        except Exception as exc:  # kontrola nigdy nie psuje odpowiedzi
+            print(f"  [VERIFY] kontrola cytatów pominięta z powodu błędu: {exc!r}", flush=True)
+            quote = []
+        if quote:
+            print("  [VERIFY] do poprawki (bez narzędzi): " + "; ".join(quote), flush=True)
+            draft = [{"role": "assistant", "content": content},
+                     {"role": "user", "content": HINT_QUOTE_FIX.format(problems="; ".join(quote))}]
+            second = _final_without_tools(messages + draft[:1], model, num_ctx, draft[1]["content"], (None,), "cytaty")
+            if second and len(_quote_problems(second, meta, session_files)) < len(quote):
+                print("  [SZKIC] poprawka cytatów bez narzędzi przyjęta", flush=True)
+                content = second
+            else:
+                print("  [SZKIC] poprawka cytatów bez narzędzi nie jest lepsza - zostaje pierwsza wersja", flush=True)
+    if content:
+        footer = (FOOTER_STOPPED.format(cause=cause) if stopped else "") + _final_check_footer(
+            content, meta, session_files, mcp, "bez narzędzi")
+        messages.append({"role": "assistant", "content": content})
+        compact_finished_history(messages)
+        phase("Odpowiedź gotowa")
+        return content + footer
+    print("  [KONIEC] brak kompletnej odpowiedzi bez narzędzi - synteza awaryjna z wybranych wyników", flush=True)
+    content = _synthesize_after_mcp_limit(question, messages, model, num_ctx, cause=cause)
+    footer = _final_check_footer(content, meta, session_files, mcp, "synteza")
+    messages.append(_emergency_history_entry(content))
+    compact_finished_history(messages)
+    phase("Odpowiedź gotowa (synteza awaryjna)")
+    return content + footer
+
+
+def _push_draft(messages: list[dict], content: str, hint: str, reason: str) -> None:
+    """Od 1.8.3: odrzucony szkic zostaje w kontekście tury (model widzi, co ma poprawić), a podpowiedź po nim.
+    Oba wpisy mają znacznik _draft: znikają z historii po turze i nie są wysyłane do Ollamy jako pole."""
+    messages.append({"role": "assistant", "content": content, "_draft": True})
+    messages.append({"role": "user", "content": hint, "_draft": True})
+    print(f"  [SZKIC] odrzucony ({reason}): {len(content)} zn.; model poprawia go, widząc swój szkic", flush=True)
+
+
 def ask(question: str, messages: list[dict], mcp: MCPStdioClient,
         model: str, num_ctx: int, on_phase=None) -> str:
     """Jedna tura narzędzi MCP i odpowiedzi + weryfikator cytatów (tryb: REFORGER_VERIFY)."""
@@ -840,9 +1245,19 @@ def ask(question: str, messages: list[dict], mcp: MCPStdioClient,
         return answer
     try:
         findings, checked, ok = _verify_answer(answer, _session_files(messages))
+        if VERIFY_MODE == "fix":
+            findings += _line_ref_problems(answer, _session_meta(messages))
+            refs, seen_n, bad_n = _line_ref_stats(answer, _session_meta(messages))
+            if refs:
+                print(f"  [LINIE] końcowa odpowiedź: odwołań do numerów linii {refs}; numerów z widoków w rozmowie "
+                      f"{seen_n}; niepotwierdzonych {bad_n}", flush=True)
         _log_verification(findings, checked, ok)
         if VERIFY_MODE == "footer" and findings:
             answer += _verification_footer(findings)
+        elif VERIFY_MODE == "fix":
+            shown = [f for f in findings if not any(m in f for m in VERIFY_NO_FIX_MARKERS)]
+            if shown:
+                answer += _verification_footer(shown)
     except Exception as exc:  # weryfikator nigdy nie może zepsuć odpowiedzi
         print(f"  [VERIFY] weryfikator pominięty z powodu błędu: {exc!r}", flush=True)
     return answer
@@ -855,13 +1270,23 @@ def _ask_impl(question: str, messages: list[dict], mcp: MCPStdioClient,
         if on_phase:
             on_phase(text)
 
-    messages.append({"role": "user", "content": question})
-    turn_start = len(messages)           # tylko wyniki narzędzi PO tym punkcie należą do tej tury
+    user_msg = {"role": "user", "content": question}
+    messages.append(user_msg)
+    try:
+        note = _question_files_note(question, mcp)
+        if note:
+            user_msg["content"] = question + note
+    except Exception as exc:  # wyszukanie pomocnicze nigdy nie psuje tury
+        print(f"  [PYTANIE] wyszukanie plików z pytania pominięte: {exc!r}", flush=True)
+    # Od 1.8.2: granica tury to TA wiadomość (szukana po tożsamości), nie zapamiętany indeks:
+    # prune_history w trakcie tury usuwa starsze wiadomości i indeks wskazywał wtedy za daleko.
     session_files = _session_files(messages)   # pełne teksty odczytanych plików (dla weryfikatora)
     view_counts: dict[str, int] = {}
     misses: list[str] = []
     meta = _session_meta(messages)       # wyniki narzędzi w sesji i nazwy odrzucone przez kompilator
     meta["kb_this_turn"] = False         # czy w tej turze ktoś (model albo silnik) sięgnął do wb_knowledge
+    meta["resolve_budget"] = PARENT_RESOLVE_PER_TURN   # ile klas bazowych silnik może ustalić w tej turze
+    meta.setdefault("chains", {})
     kb_rounds = 0
     api_fix_rounds = 0
     api_footer = ""
@@ -872,7 +1297,7 @@ def _ask_impl(question: str, messages: list[dict], mcp: MCPStdioClient,
         except Exception as exc:  # kontrola nigdy nie psuje tury
             print(f"  [API] sprawdzenie błędu kompilatora pominięte: {exc!r}", flush=True)
     empty_retries = 0
-    empty_final_retries = 0              # ponowienia po pustej generacji PO użyciu narzędzi
+    first_draft = None                   # od 1.8.3: (treść, problemy API, składnia, cytaty) pierwszego odrzuconego szkicu
     tools = _with_local_view_params(slim_tool_definitions(mcp.tools))
     full_cache: dict[str, str] = {}      # pełny tekst odczytów game_read (do lokalnych widoków)
     seen_calls: set[str] = set()
@@ -897,7 +1322,8 @@ def _ask_impl(question: str, messages: list[dict], mcp: MCPStdioClient,
         done_reason = assistant.pop("_done_reason", "")
         prompt_tokens = assistant.pop("_prompt_eval_count", None)
         completion_tokens = assistant.pop("_eval_count", None)
-        print(f"  [OLLAMA] reason={done_reason or '?'} context_tokens={prompt_tokens} output_tokens={completion_tokens}", flush=True)
+        print(f"  [OLLAMA] reason={done_reason or '?'} context_tokens={prompt_tokens} output_tokens={completion_tokens} "
+              f"model={model}", flush=True)
         if prompt_tokens and prompt_tokens >= 0.9 * num_ctx:
             print(f"  [UWAGA] kontekst {prompt_tokens}/{num_ctx} tokenów - Ollama mogła uciąć prompt. "
                   "Zwiększ OLLAMA_NUM_CTX.", flush=True)
@@ -911,7 +1337,8 @@ def _ask_impl(question: str, messages: list[dict], mcp: MCPStdioClient,
             content = str(assistant.get("content") or "").strip()
             # Model moze wydac tokeny na rozumowanie i nie wygenerowac tekstu.
             # Nie ponawiaj tego samego przepelnionego watku; uzyj zebranego MCP.
-            turn_has_tools = any(m.get("role") == "tool" for m in messages[turn_start:])
+            qpos = next((i for i in range(len(messages) - 1, -1, -1) if messages[i] is user_msg), len(messages))
+            turn_has_tools = any(m.get("role") == "tool" for m in messages[qpos + 1:])
             if not content and not turn_has_tools:
                 # Pusta odpowiedź bez ani jednego odczytu w tej turze (np. nieudane parsowanie
                 # tool_calls przez Ollamę). Ponów z podpowiedzią; NIE syntezuj z niczego.
@@ -926,41 +1353,19 @@ def _ask_impl(question: str, messages: list[dict], mcp: MCPStdioClient,
                 compact_finished_history(messages)
                 phase("Brak odpowiedzi modelu")
                 return content
-            if not content and turn_has_tools and empty_final_retries < 1:
-                # Najczęściej: rozumowanie zjadło cały limit generacji (reason=length) albo model zwrócił
-                # samo rozumowanie. Zamiast od razu syntezować z okrojonych dowodów, dajemy modelowi
-                # PEŁNY kontekst tury, niskie rozumowanie i zakaz narzędzi: odpowiedź ma być z tego, co zebrał.
-                empty_final_retries += 1
-                print(f"  [OLLAMA] Pusty wynik po użyciu MCP (reason={done_reason or '?'}) - ponowienie z niskim "
-                      "rozumowaniem, bez narzędzi", flush=True)
-                phase("Model nie zwrócił tekstu - ponawiam z krótszym rozumowaniem")
-                retry_hint = {"role": "user", "content": HINT_RETRY_AFTER_EMPTY}
-                retry = None
-                try:
-                    retry = ollama_chat(messages + [retry_hint], [], model, num_ctx, think="low")
-                except RuntimeError as exc:
-                    print(f"  [OLLAMA] ponowienie nieudane ({exc}); przechodzę do syntezy", flush=True)
-                if retry is not None:
-                    r_reason = retry.pop("_done_reason", "")
-                    retry.pop("_prompt_eval_count", None)
-                    r_tokens = retry.pop("_eval_count", None)
-                    print(f"  [OLLAMA] ponowienie: reason={r_reason or '?'} output_tokens={r_tokens}", flush=True)
-                    r_content = str(retry.get("content") or "").strip()
-                    if r_content and r_reason not in ("length", "max_tokens") and not _is_incomplete_answer(r_content):
-                        messages.append({"role": "assistant", "content": r_content})
-                        compact_finished_history(messages)
-                        phase("Odpowiedź gotowa (ponowienie po pustej generacji)")
-                        return r_content
-                    print("  [OLLAMA] ponowienie bez pełnej odpowiedzi - synteza awaryjna", flush=True)
             if not content and turn_has_tools:
-                print("  [OLLAMA] Pusty wynik po uzyciu MCP - osobna synteza z dowodow", flush=True)
-                phase("Model nie zwrocil tekstu - przygotowanie podsumowania")
-                content = _synthesize_after_mcp_limit(question, messages, model, num_ctx,
-                                                       cause="pusta odpowiedz modelu")
-                messages.append(_emergency_history_entry(content))
-                compact_finished_history(messages)
-                phase("Odpowiedz gotowa (podsumowanie zrodel)")
-                return content
+                # Najczęściej: rozumowanie zjadło limit generacji (reason=length) albo model zwrócił samo rozumowanie.
+                # PEŁNY kontekst tury, niskie rozumowanie i bez narzędzi: odpowiedź ma być z tego, co zebrał.
+                if first_draft is not None:
+                    print(f"  [SZKIC] poprawka nie powstała (pusta generacja, reason={done_reason or '?'}) "
+                          "- zostaje pierwszy szkic", flush=True)
+                    content = first_draft[0]
+                else:
+                    print(f"  [OLLAMA] Pusty wynik po użyciu MCP (reason={done_reason or '?'}) - ponowienie z niskim "
+                          "rozumowaniem, bez narzędzi", flush=True)
+                    return _finish_without_tools(question, messages, model, num_ctx, "pusta odpowiedź modelu",
+                                                 HINT_RETRY_AFTER_EMPTY, ("low", "low"), False,
+                                                 meta, session_files, mcp, phase)
             needs_repair = (done_reason in ("length", "max_tokens") or _is_incomplete_answer(content))
             if needs_repair:
                 print("  [OLLAMA] Odpowiedź niepełna / limit generowania — jedna próba ponownej syntezy.", flush=True)
@@ -988,7 +1393,8 @@ def _ask_impl(question: str, messages: list[dict], mcp: MCPStdioClient,
                     )
             api_footer = ""
             kb_hint = None
-            if (KB_CHECK_MODE == "on" and content and kb_rounds < 1 and not meta.get("kb_this_turn")
+            problems, syntax = [], []
+            if (KB_CHECK_MODE == "on" and content and kb_rounds < 1 and first_draft is None and not meta.get("kb_this_turn")
                     and "wb_knowledge" in getattr(mcp, "tools", {}) and count < MAX_TOOL_CALLS):
                 try:
                     own = _own_code_blocks(content, meta, session_files)
@@ -1005,8 +1411,10 @@ def _ask_impl(question: str, messages: list[dict], mcp: MCPStdioClient,
                             kb_hint = HINT_KB_CHECK.format(query=kb_query, files=", ".join(kb_files) or "-", excerpt=excerpt)
                 except Exception as exc:  # kontrola nigdy nie psuje odpowiedzi
                     print(f"  [KB] kontrola wzorców pominięta z powodu błędu: {exc!r}", flush=True)
+            quote: list[str] = []
             if API_CHECK_MODE != "off" and content:
                 try:
+                    _prepare_api_evidence(content, meta, session_files, mcp)
                     problems = _api_problems(content, meta, session_files)
                 except Exception as exc:  # kontrola nigdy nie psuje odpowiedzi
                     print(f"  [API] kontrola pominięta z powodu błędu: {exc!r}", flush=True)
@@ -1018,26 +1426,50 @@ def _ask_impl(question: str, messages: list[dict], mcp: MCPStdioClient,
                     syntax = []
                 if syntax:
                     print("  [KOD] niedozwolona składnia: " + "; ".join(syntax), flush=True)
-                if problems or syntax:
-                    if problems:
-                        print("  [API] niepotwierdzone: " + "; ".join(problems), flush=True)
-                    if API_CHECK_MODE == "fix" and api_fix_rounds < 1 and count < MAX_TOOL_CALLS:
-                        api_fix_rounds += 1
-                        phase("Sprawdzam nazwy API użyte w kodzie")
-                        parts = ([HINT_API_FIX.format(problems="; ".join(problems))] if problems else []) + (
-                            [HINT_SYNTAX_FIX.format(problems="; ".join(syntax))] if syntax else []) + (
-                            [kb_hint] if kb_hint else [])
-                        pending_hint = {"role": "user", "content": "\n\n".join(parts)}
-                        continue          # szkic odrzucony: nie trafia do historii
-                    if API_CHECK_MODE == "fix":
-                        api_footer = (_api_footer(problems) if problems else "") + (
-                            FOOTER_SYNTAX.format(problems="; ".join(syntax)) if syntax else "")
-                elif api_fix_rounds:
-                    print("  [API] po rundzie poprawkowej wszystkie nazwy potwierdzone", flush=True)
+                if problems:
+                    print("  [API] niepotwierdzone: " + "; ".join(problems), flush=True)
+            if VERIFY_MODE == "fix" and content:
+                try:
+                    quote = _quote_problems(content, meta, session_files)
+                except Exception as exc:  # j.w.
+                    print(f"  [VERIFY] kontrola cytatów pominięta z powodu błędu: {exc!r}", flush=True)
+                    quote = []
+                if quote:
+                    print("  [VERIFY] do poprawki: " + "; ".join(quote), flush=True)
+                refs, seen_n, bad_n = _line_ref_stats(content, meta)
+                if refs:
+                    print(f"  [LINIE] odwołań do numerów linii: {refs}; numerów z widoków w rozmowie: {seen_n}; "
+                          f"niepotwierdzonych: {bad_n}", flush=True)
+            api_fixable = API_CHECK_MODE == "fix" and bool(problems or syntax)
+            if (api_fixable or quote) and api_fix_rounds < 1 and count < MAX_TOOL_CALLS:
+                api_fix_rounds += 1
+                phase("Sprawdzam nazwy API i cytaty w odpowiedzi")
+                parts = ([HINT_API_FIX.format(problems="; ".join(problems))] if api_fixable and problems else []) + (
+                    [HINT_SYNTAX_FIX.format(problems="; ".join(syntax))] if api_fixable and syntax else []) + (
+                    [HINT_QUOTE_FIX.format(problems="; ".join(quote))] if quote else []) + (
+                    [kb_hint] if kb_hint else [])
+                first_draft = first_draft or (content, problems, syntax, quote)
+                reason = " + ".join(r for r, on in (("kontrola API", api_fixable), ("cytaty", bool(quote)),
+                                                    ("wiedza", bool(kb_hint))) if on)
+                _push_draft(messages, content, "\n\n".join(parts), reason)
+                continue          # szkic odrzucony: model poprawia go, widząc go w kontekście tury
+            if api_fix_rounds and not (problems or syntax or quote):
+                print("  [API] po rundzie poprawkowej wszystkie nazwy i cytaty potwierdzone", flush=True)
             if kb_hint:
                 phase("Porównuję kod z wzorcami z bazy wiedzy")
-                pending_hint = {"role": "user", "content": kb_hint}
+                first_draft = first_draft or (content, problems, syntax, quote)
+                _push_draft(messages, content, kb_hint, "wiedza przed kodem")
                 continue              # szkic odrzucony: model porówna go ze wzorcami i odpowie od nowa
+            if first_draft is not None and (API_CHECK_MODE != "off" or VERIFY_MODE == "fix"):
+                now, before = len(problems) + len(syntax) + len(quote), sum(len(x) for x in first_draft[1:])
+                if now > before:
+                    # Od 1.8.3: poprawka nie może pogorszyć odpowiedzi (A2: dobry szkic zastąpiony gorszym).
+                    print(f"  [SZKIC] poprawiona wersja ma więcej problemów ({now} > {before}) - zostaje pierwszy szkic",
+                          flush=True)
+                    content, problems, syntax, quote = first_draft
+            if API_CHECK_MODE == "fix" and (problems or syntax):
+                api_footer = (_api_footer(problems) if problems else "") + (
+                    FOOTER_SYNTAX.format(problems="; ".join(syntax)) if syntax else "")
             messages.append({"role": "assistant", "content": content})
             compact_finished_history(messages)
             phase("Odpowiedź gotowa")
@@ -1048,13 +1480,10 @@ def _ask_impl(question: str, messages: list[dict], mcp: MCPStdioClient,
                           else "limit rund narzędzi")
             # GPT-OSS bywa skłonny zwrócić tool_calls nawet gdy API nie przekazało
             # narzędzi. Zamiast kończyć pustym błędem: osobna synteza ze źródeł.
-            print("  [OLLAMA] Zatrzymano dalsze wywołania (limit lub pętla błędów); osobna synteza.", flush=True)
-            phase("Zatrzymano poszukiwania — podsumowanie źródeł")
-            content = _synthesize_after_mcp_limit(question, messages, model, num_ctx, cause=stop_cause)
-            messages.append(_emergency_history_entry(content))
-            compact_finished_history(messages)
-            phase("Odpowiedź gotowa (zatrzymano wyszukiwanie)")
-            return content
+            print(f"  [OLLAMA] Zatrzymano dalsze wywołania ({stop_cause}); odpowiedź bez narzędzi w tej rozmowie.", flush=True)
+            return _finish_without_tools(question, messages, model, num_ctx, stop_cause,
+                                         HINT_FINAL_NO_TOOLS.format(cause=stop_cause), (None, "low"), True,
+                                         meta, session_files, mcp, phase)
 
         # Ollama wymaga dopisania assistant/tool_calls przed wynikami narzedzi.
         _trim_thinking(assistant)
@@ -1074,12 +1503,26 @@ def _ask_impl(question: str, messages: list[dict], mcp: MCPStdioClient,
                 # Lokalny widok pliku (query / zakres linii): wycinamy te parametry PRZED naprawą,
                 # bo game_read w BK ich nie ma, a model prosi o nie w każdej rundzie testów.
                 view = None
+                content_search = None
+                if str(name or "").lower() in CONTENT_SEARCH_ALIASES:
+                    # Od 1.8.4: modele wymyślają "szukaj w treści plików" (np. game_search).
+                    path_arg = str(arguments.get("path") or arguments.get("file") or "")
+                    text_arg = next((arguments[k] for k in ("query", "pattern", "text", "search") if arguments.get(k)), "")
+                    if re.search(r"\.\w{1,6}$", path_arg) and text_arg:
+                        content_search = f"'{name}' nie istnieje -> game_read z query (szukanie w tym pliku)"
+                        name, arguments = "game_read", {"path": path_arg, "query": text_arg}
+                    else:
+                        content_search = TOOL_CONTENT_SEARCH.format(name=name)
                 if str(name or "").lower() in GAME_READ_ALIASES:
                     arguments, view = _extract_view_spec(arguments)
                 # Naprawa PRZED limitem i dedupe: halucynowane nazwy (search/open...),
                 # nieznane argumenty, typy i limity wg prawdziwego schematu z tools/list.
                 model_title = arguments.get("title") if isinstance(arguments, dict) else None
                 fixed_name, fixed_args, notes = repair_tool_call(name, arguments, mcp.tools)
+                if content_search and name != "game_read":
+                    fixed_name, notes = None, [content_search]
+                elif content_search:
+                    notes.insert(0, content_search)
                 class_hint = None
                 if fixed_name == "api_search" and isinstance(fixed_args.get("query"), str):
                     m = API_CLASS_METHOD_QUERY_RE.match(fixed_args["query"])
@@ -1106,6 +1549,19 @@ def _ask_impl(question: str, messages: list[dict], mcp: MCPStdioClient,
                     if not isinstance(wanted, (int, float)) or wanted > WB_KNOWLEDGE_MAX_FILES:
                         notes.append(f"max_files {wanted} -> {WB_KNOWLEDGE_MAX_FILES}")
                         fixed_args["max_files"] = WB_KNOWLEDGE_MAX_FILES
+                if fixed_name == "game_browse" and isinstance(fixed_args.get("pattern"), str):
+                    pattern = fixed_args["pattern"].strip()
+                    if pattern in GAME_BROWSE_ANY_PATTERNS or not pattern:
+                        fixed_args.pop("pattern")
+                        notes.append(f"pattern {pattern!r} usunięty (bez filtra)")
+                    elif not re.fullmatch(GAME_BROWSE_PATTERN_RE, pattern):
+                        # Od 1.8.3: w BK pattern to tylko filtr rozszerzenia; inny wzorzec zwraca same katalogi.
+                        frag = re.sub(r"[*?()]|\.c$", "", pattern).strip(". ") or pattern
+                        notes = [TOOL_BROWSE_PATTERN.format(pattern=pattern, frag=frag)]
+                        fixed_name = None
+                if fixed_name == "asset_search" and re.search(ASSET_QUERY_CODE_RE, str(fixed_args.get("query", ""))):
+                    notes = [TOOL_ASSET_CODE_QUERY.format(query=fixed_args.get("query", ""))]
+                    fixed_name = None
                 if fixed_name is None:
                     # Błąd modelu, nie wyszukiwanie: nie wołamy MCP i nie liczymy do limitu.
                     response = "BŁĄD: " + "; ".join(notes) + "\n" + tool_schema_hint(mcp.tools, name)
@@ -1113,14 +1569,23 @@ def _ask_impl(question: str, messages: list[dict], mcp: MCPStdioClient,
                 else:
                     name, arguments = fixed_name, fixed_args
                     if name == "api_search":
-                        cap = (SOFT_LIMIT_CLASS_SEARCH if arguments.get("type", "any") in ("class", "any")
-                               else SOFT_LIMIT_OTHER_SEARCH)
-                        wanted = arguments.get("limit", 10)
-                        if not isinstance(wanted, (int, float)) or wanted > cap:
-                            notes.append(f"limit {wanted} -> {cap} (wyniki klas są bardzo długie)")
-                            arguments["limit"] = cap
-                        elif "limit" not in arguments:
-                            arguments["limit"] = cap
+                        q = str(arguments.get("query") or "").strip()
+                        if (str(arguments.get("type", "any")).lower() in ("class", "any")
+                                and re.fullmatch(API_EXACT_CLASS_RE, q) and _class_result(mcp, q)):
+                            # Od 1.8.3: przy kilku wynikach BK pokazuje tylko 10 metod klasy i bez dziedziczonych
+                            # (test D: model "dopełnił" brakujące metody wymysłami). Dokładna klasa = pełny widok.
+                            if arguments.get("limit") != 1 or arguments.get("type") != "class":
+                                notes.append(API_EXACT_CLASS_NOTE.format(name=q))
+                            arguments = {"query": q, "type": "class", "limit": 1}
+                        else:
+                            cap = (SOFT_LIMIT_CLASS_SEARCH if arguments.get("type", "any") in ("class", "any")
+                                   else SOFT_LIMIT_OTHER_SEARCH)
+                            wanted = arguments.get("limit", 10)
+                            if not isinstance(wanted, (int, float)) or wanted > cap:
+                                notes.append(f"limit {wanted} -> {cap} (wyniki klas są bardzo długie)")
+                                arguments["limit"] = cap
+                            elif "limit" not in arguments:
+                                arguments["limit"] = cap
                     if notes:
                         print(f"  [REPAIR] {orig_name}: {'; '.join(notes)}", flush=True)
                     if name != "game_read":
@@ -1155,6 +1620,7 @@ def _ask_impl(question: str, messages: list[dict], mcp: MCPStdioClient,
                             response = TOOL_VIEW_LIMIT.format(limit=VIEW_LIMIT_PER_FILE, ledger=_ledger(read_paths, searches, misses))
                         else:
                             response, view_found = _render_view(full_cache[base_signature], view)
+                            _record_view_lines(meta, response, arguments.get("path"))
                             print(f"  [VIEW] {arguments.get('path', '')} {_view_label(view)} -> {len(response)} zn. "
                                   f"({'trafienia' if view_found else 'BEZ trafień'}; z pamięci, bez wywołania MCP)", flush=True)
                             if view_found:
@@ -1171,7 +1637,8 @@ def _ask_impl(question: str, messages: list[dict], mcp: MCPStdioClient,
                     else:
                         seen_calls.add(signature)
                         count += 1
-                        print(f"  [MCP {count}/{MAX_TOOL_CALLS}] {name} {json.dumps(arguments, ensure_ascii=False)}", flush=True)
+                        print(f"  [MCP {count}/{MAX_TOOL_CALLS}] {name} {json.dumps(arguments, ensure_ascii=False)}"
+                              + (f" + widok {_view_label(view)}" if view else ""), flush=True)
                         phase(f"MCP · {name} ({count}/{MAX_TOOL_CALLS})")
                         result = mcp.call_tool(name, arguments)
                         is_error = bool(result.get("isError"))
@@ -1199,6 +1666,7 @@ def _ask_impl(question: str, messages: list[dict], mcp: MCPStdioClient,
                                 view_counts[_path_key(arguments.get("path"))] = 1
                         if view and not is_error:
                             response, view_found = _render_view(raw, view)
+                            _record_view_lines(meta, response, arguments.get("path"))
                         else:
                             response = tool_text(result, name, arguments)
                             if name == "game_read" and not is_error and len(raw) > MAX_TOOL_RESULT_CHARS:
@@ -1229,6 +1697,15 @@ def _ask_impl(question: str, messages: list[dict], mcp: MCPStdioClient,
                                                   + (f" [{_view_label(view)}]" if view else ""))
                             else:
                                 searches.append(f"{name}({arguments.get('query', arguments.get('path', ''))})")
+                        if name == "api_search" and not is_error:
+                            try:
+                                parents = _parents_note(mcp, meta, arguments.get("query"), raw)
+                            except Exception as exc:  # uzupełnienie nigdy nie psuje tury
+                                print(f"  [BAZA] uzupełnienie pominięte z powodu błędu: {exc!r}", flush=True)
+                                parents = ""
+                            if parents:
+                                response += parents
+                                successful_tool = True
                         print(f"  -> {'BŁĄD' if is_error else 'ok'} {len(response)} zn.", flush=True)
                         if class_hint and not is_error:
                             method = arguments.get("query", "")
@@ -1260,13 +1737,11 @@ def _ask_impl(question: str, messages: list[dict], mcp: MCPStdioClient,
         if count >= MAX_TOOL_CALLS:
             # Nie zostawiaj w historii trwałego systemowego zakazu narzędzi!
             # Wcześniej taka wiadomość mogła zatruwać następną turę rozmowy.
-            print("  [OLLAMA] Limit MCP — osobna synteza już odczytanych źródeł.", flush=True)
-            phase("Limit MCP — podsumowanie zebranych źródeł")
-            content = _synthesize_after_mcp_limit(question, messages, model, num_ctx)
-            messages.append(_emergency_history_entry(content))
-            compact_finished_history(messages)
-            phase("Odpowiedź gotowa (podsumowanie po limicie)")
-            return content
+            print("  [OLLAMA] Limit MCP - odpowiedź bez narzędzi w tej rozmowie.", flush=True)
+            cause = f"limit {MAX_TOOL_CALLS} wywołań MCP"
+            return _finish_without_tools(question, messages, model, num_ctx, cause,
+                                         HINT_FINAL_NO_TOOLS.format(cause=cause), (None, "low"), True,
+                                         meta, session_files, mcp, phase)
 
 
 def main() -> int:

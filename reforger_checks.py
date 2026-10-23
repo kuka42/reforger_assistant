@@ -5,6 +5,9 @@ from __future__ import annotations
 import re
 
 from reforger_prompts import FOOTER_VERIFY, FOOTER_VERIFY_MORE, FOOTER_API
+from reforger_prompts import API_GAME_INSTANCE, API_CHAIN_NOT_SEEN, API_DECL_NO_CLASS, API_DECL_NO_OVERRIDE, API_DECL_NO_IMPLICIT
+from reforger_prompts import QUOTE_LINES_NOT_SEEN
+from reforger_rules import LINE_REF_RE, VERIFY_NO_FIX_MARKERS
 from reforger_rules import _COMPILE_LINE_RES, KB_SECTION_RE, SYNTAX_RULES
 from reforger_rules import KB_CHECK_CAP, KB_CHECK_DROP_WORDS, KB_CHECK_PRIORITY_RE
 from reforger_rules import (
@@ -52,8 +55,21 @@ def _path_key(path) -> str:
     return str(path or "").replace("\\", "/").strip().lstrip("/").lower()
 
 
+def _session_key(messages: list):
+    """Od 1.8.5: trwały klucz rozmowy zapisany w wiadomości systemowej (pole '_sid', nie trafia do Ollamy).
+    Wcześniej kluczem był id(listy): po usunięciu rozmowy Python oddawał ten sam adres nowej liście
+    i nowa rozmowa dziedziczyła odczytane pliki, dowody i widziane numery linii poprzedniej."""
+    if messages and isinstance(messages[0], dict):
+        sid = messages[0].get("_sid")
+        if not sid:
+            import secrets
+            sid = messages[0]["_sid"] = secrets.token_hex(8)
+        return sid
+    return id(messages)
+
+
 def _session_files(messages: list) -> dict[str, str]:
-    key = id(messages)
+    key = _session_key(messages)
     store = _SESSION_FILES.get(key)
     if store is None:
         if len(_SESSION_FILES) >= _SESSION_FILES_MAX:
@@ -103,6 +119,8 @@ def _verify_answer(answer: str, files: dict[str, str]):
             pending_path = only_path.group(1)
             continue
         lines = [re.sub(r"^\s*\d+\|\s?", "", ln) for ln in block.split("\n")]      # numeracja widoku
+        # Od 1.8.4: skrót treści w linii ("Komponent "{GUID}" { … }") to pominięcie, nie wymyślona linia.
+        lines = [re.sub(r"\{\s*(?:…|\.\.\.)\s*\}\s*$", "{", ln) for ln in lines]
         path = None
         head_paths = _PATH_RE.findall("\n".join(lines[:4]))
         if head_paths:
@@ -153,7 +171,11 @@ def _verify_answer(answer: str, files: dict[str, str]):
         if text is None:
             # Kod własny (modded class albo nowa klasa z własnym tagiem, np. RA_Foo) to nie cytat z gry,
             # tylko plik docelowy użytkownika - "nieodczytany" byłby fałszywym alarmem.
-            if not (re.search(r"\bmodded\s+class\b", block)
+            new_classes = [c for c in re.findall(r"^\s*(?:sealed\s+)?class\s+([A-Za-z_]\w*)", block, re.M)
+                           if not c.endswith("Class")]
+            own_new = bool(new_classes) and not any(re.search(rf"\bclass\s+{re.escape(c)}\b", t)
+                                                    for c in new_classes for t in files.values())
+            if not (re.search(r"\bmodded\s+class\b", block) or own_new       # od 1.8.6: nowa klasa = plik modu
                     or re.search(r"\bclass\s+(?!SCR_)[A-Z][A-Z0-9]{1,5}_\w+", block)):
                 findings.append(f"plik '{path}' nie został odczytany w tej rozmowie - cytat niepotwierdzony")
             continue
@@ -173,10 +195,12 @@ def _verify_answer(answer: str, files: dict[str, str]):
             seg_norm = _norm_code("\n".join(seg))
             if len(seg_norm) < 20 or seg_norm in fnorm:
                 continue
-            missing = [ln.strip() for ln in seg if len(_norm_code(ln)) >= 12 and _norm_code(ln) not in fnorm]
+            # Od 1.8.6: linia ze skrótem ("components { … }", "X …") nie może być dosłowna - to pominięcie, nie wymysł.
+            cand = [ln for ln in seg if not re.search(r"…|\.\.\.", ln)]
+            missing = [ln.strip() for ln in cand if len(_norm_code(ln)) >= 12 and _norm_code(ln) not in fnorm]
             if not missing:
                 # krótkie linie (np. "return null;") sprawdzamy dopiero, gdy cały fragment nie pasuje do pliku
-                missing = [ln.strip() for ln in seg if len(_norm_code(ln)) >= 6 and _norm_code(ln) not in fnorm]
+                missing = [ln.strip() for ln in cand if len(_norm_code(ln)) >= 6 and _norm_code(ln) not in fnorm]
             if missing:
                 bad_lines.extend(missing)
             else:
@@ -242,12 +266,12 @@ _EVIDENCE_CAP_CHARS = 600_000
 
 
 def _session_meta(messages: list) -> dict:
-    key = id(messages)
+    key = _session_key(messages)
     meta = _SESSION_META.get(key)
     if meta is None:
         if len(_SESSION_META) >= _SESSION_FILES_MAX:
             _SESSION_META.pop(next(iter(_SESSION_META)))
-        meta = _SESSION_META[key] = {"evidence": [], "chars": 0, "banned": set()}
+        meta = _SESSION_META[key] = {"evidence": [], "chars": 0, "banned": set(), "chains": {}}
     return meta
 
 
@@ -326,10 +350,127 @@ def _find_class_method(texts: list[str], cls: str, meth: str):
     return False, None
 
 
+_CLASS_DECL_LINE_RE = re.compile(
+    r"^[ \t]*(modded[ \t]+)?(?:sealed[ \t]+)?class[ \t]+([A-Za-z_]\w*)[ \t]*(?:(?::|extends)[ \t]*([A-Za-z_]\w*))?", re.M)
+_OVERRIDE_RE = re.compile(
+    r"\boverride\s+(?:(?:protected|private|static|event|ref|proto|external)\s+)*[\w<>,]+\s+([A-Za-z_]\w*)\s*\(")
+
+
+def _decl_items(answer: str) -> list[tuple]:
+    """Deklaracje klas w kodzie odpowiedzi (od 1.8.3): (klasa, klasa bazowa | None, modded, [metody z override])."""
+    items: list[tuple] = []
+    for lang, block in _API_CODE_BLOCK_RE.findall(answer):
+        if lang.lower() in _NON_CODE_LANGS or _PREFAB_LIKE_RE.search(block):
+            continue
+        code = _strip_code_noise(block)
+        decls = list(_CLASS_DECL_LINE_RE.finditer(code))
+        for i, m in enumerate(decls):
+            body = code[m.end():decls[i + 1].start() if i + 1 < len(decls) else len(code)]
+            overrides = list(dict.fromkeys(_OVERRIDE_RE.findall(body)))
+            items.append((m.group(2), m.group(3), bool(m.group(1)), overrides, _implicit_calls(body)))
+    return items
+
+
+def _implicit_calls(body: str) -> list[str]:
+    """Od 1.8.6: wywołania bez obiektu w ciele klasy (np. GetEntity()) - metody tej klasy albo jej klas bazowych.
+    Pomijamy metody zadeklarowane w tym ciele, konstruktory (new X), atrybuty, słowa kluczowe i funkcje globalne."""
+    own = set(re.findall(r"^\s*(?:(?:override|static|protected|private|sealed|event|proto|external)\s+)*(?:ref\s+)?"
+                         r"[A-Za-z_][\w<>,]*\s+([A-Za-z_]\w*)\s*\(", body, re.M))
+    calls = []
+    for m in re.finditer(r"(?<![\w.])([A-Z]\w*)\s*\(", body):
+        name = m.group(1)
+        before = body[max(0, m.start() - 6):m.start()]
+        if (name in own or name in _API_GLOBAL_OK or name in _API_KEYWORDS or name in _API_METHOD_OK
+                or re.search(r"new\s+$", before) or re.search(r"\[\s*$", before)):
+            continue
+        calls.append(name)
+    return list(dict.fromkeys(calls))
+
+
+def _decl_target(cls: str, base, modded: bool, own: set):
+    """Klasa, którą deklaracja zakłada w grze: modded -> sama klasa; 'class X : Y' -> Y (chyba że Y jest w odpowiedzi)."""
+    if modded:
+        return cls
+    if base and base not in own:
+        return base
+    return None
+
+
+def _class_known(texts: list[str], cls: str) -> bool:
+    c_re = re.escape(cls)
+    return any(re.search(rf"^##\s+{c_re}\s*$", t, re.M) or re.search(rf"\bclass\s+{c_re}\b", t) for t in texts)
+
+
+def _decl_problems(answer: str, meta: dict, files: dict[str, str]) -> list[str]:
+    """Klasa bazowa / klasa modyfikowana musi istnieć, a metody z override muszą być w niej lub w jej przodkach."""
+    texts = _evidence_texts(meta, files)
+    chains = meta.get("chains", {})
+    items = _decl_items(answer)
+    own = {it[0] for it in items if not it[2]}
+    problems: list[str] = []
+    for cls, base, modded, overrides, implicit in items:
+        target = _decl_target(cls, base, modded, own)
+        if not target:
+            continue
+        decl = f"modded class {cls}" if modded else f"class {cls} : {base}"
+        if not _class_known(texts, target):
+            problems.append(API_DECL_NO_CLASS.format(decl=decl, target=target))
+            continue
+        classes = [target] + chains.get(target, [])
+        for meth in overrides:
+            if not any(_find_class_method(texts, c, meth)[0] for c in classes):
+                problems.append(API_DECL_NO_OVERRIDE.format(meth=meth, cls=cls, target=target))
+        for meth in implicit:
+            if meth in overrides or _class_known(texts, meth):
+                continue                  # nazwa klasy (np. rzutowanie) albo metoda już sprawdzona jako override
+            if not any(_find_class_method(texts, c, meth)[0] for c in classes):
+                problems.append(API_DECL_NO_IMPLICIT.format(meth=meth, cls=cls, target=target))
+    return problems
+
+
+def _enum_values(texts: list[str], enum: str) -> set[str] | None:
+    """Wartości enuma z dowodów: deklaracja 'enum X { ... }' z odczytanego pliku albo lista 'Values:' z api_search.
+    None = enuma nie ma w dowodach (wtedy nic nie zgłaszamy)."""
+    e_re = re.escape(enum)
+    for t in texts:
+        m = re.search(rf"\benum\s+{e_re}\s*(?::\s*\w+\s*)?\{{(.*?)\}}", t, re.S)
+        if m:
+            body = re.sub(r"//[^\n]*|/\*.*?\*/", "", m.group(1), flags=re.S)
+            return set(re.findall(r"\b([A-Za-z_]\w*)\s*(?:=[^,\n]*)?\s*(?:,|$)", body, re.M))
+        m = re.search(rf"\.{e_re}\b[^\n]*\n(?:[^\n]*\n){{0,4}}?\s*Values:\s*\n((?:\s*-\s*\w+[^\n]*\n?)+)", t)
+        if m:
+            return set(re.findall(r"^\s*-\s*(\w+)", m.group(1), re.M))
+    return None
+
+
+def _enum_problems(answer: str, texts: list[str]) -> list[str]:
+    """Enum.WARTOŚĆ w kodzie odpowiedzi, gdy enum jest w dowodach, a takiej wartości w nim nie ma (np. LogLevel.INFO)."""
+    problems = []
+    for lang, block in _API_CODE_BLOCK_RE.findall(answer):
+        if lang.lower() in _NON_CODE_LANGS or _PREFAB_LIKE_RE.search(block):
+            continue
+        code = _strip_code_noise(block)
+        for enum, value in dict.fromkeys(re.findall(r"(?<![\w.])([A-Z]\w*)\.([A-Z][A-Z0-9_]+)\b(?!\s*\()", code)):
+            values = _enum_values(texts, enum)
+            if values and value not in values:
+                shown = ", ".join(sorted(values)[:10])
+                problems.append(f"{enum}.{value}: wartości {value} nie ma w enumie {enum} (są: {shown})")
+    return problems
+
+
+def _game_classes(meta: dict) -> list[str]:
+    """Klasy obiektu gry: stała lista + łańcuch przodków ArmaReforgerScripted ustalony z plików gry (od 1.8.2)."""
+    chain = meta.get("chains", {}).get("ArmaReforgerScripted", [])
+    return list(dict.fromkeys(list(_API_GAME_CLASSES) + list(chain)))
+
+
 def _api_problems(answer: str, meta: dict, files: dict[str, str]) -> list[str]:
-    """Nazwy API w kodzie odpowiedzi, których nie potwierdzają wyniki narzędzi tej rozmowy."""
+    """Nazwy API w kodzie odpowiedzi, których nie potwierdzają wyniki narzędzi tej rozmowy.
+    Od 1.8.2 metoda klasy jest szukana także w klasach bazowych ustalonych przez silnik (meta['chains'])."""
     texts = _evidence_texts(meta, files)
     banned = meta.get("banned", set())
+    chains = meta.get("chains", {})
+    game_classes = _game_classes(meta)
     problems: list[str] = []
     for cls, meth, kind in _api_calls(answer):
         shown = (f"GetGame().{meth}" if kind == "game" else f"{cls}.{meth}" if cls else f"{meth}")
@@ -337,18 +478,29 @@ def _api_problems(answer: str, meta: dict, files: dict[str, str]) -> list[str]:
             problems.append(f"{shown}: kompilator zgłosił, że {cls + '.' if cls else ''}{meth} nie istnieje")
             continue
         if kind == "game":
-            if not any(_find_class_method(texts, c, meth)[0] for c in _API_GAME_CLASSES):
-                problems.append(f"{shown}: brak w wynikach narzędzi dla ArmaReforgerScripted i jej klas bazowych")
+            if not any(_find_class_method(texts, c, meth)[0] for c in game_classes):
+                problems.append(API_CHAIN_NOT_SEEN.format(shown=shown, cls="ArmaReforgerScripted",
+                                                          chain=" : ".join(game_classes[1:]) or "-"))
             continue
         if kind == "static":
             found, is_static = _find_class_method(texts, cls, meth)
             if not found:
-                problems.append(f"{shown}: brak w wynikach narzędzi dla klasy {cls}")
+                for ancestor in chains.get(cls, []):
+                    found, is_static = _find_class_method(texts, ancestor, meth)
+                    if found:
+                        break
+            if not found:
+                chain = chains.get(cls)
+                problems.append(API_CHAIN_NOT_SEEN.format(shown=shown, cls=cls, chain=" : ".join(chain))
+                                if chain else f"{shown}: brak w wynikach narzędzi dla klasy {cls}")
             elif is_static is False:
-                problems.append(f"{shown}: metoda instancji wywołana statycznie (wywołaj ją na obiekcie)")
+                problems.append(API_GAME_INSTANCE.format(cls=cls, meth=meth) if cls in game_classes
+                                else f"{shown}: metoda instancji wywołana statycznie (wywołaj ją na obiekcie)")
             continue
         if not any(re.search(rf"\b{re.escape(meth)}\s*\(", t) for t in texts):
             problems.append(f"{shown}(): brak w wynikach narzędzi")
+    problems = _decl_problems(answer, meta, files) + problems      # od 1.8.3: klasy bazowe i override najpierw
+    problems += _enum_problems(answer, texts)                     # od 1.8.5: wymyślone wartości enumów
     return list(dict.fromkeys(problems))[:8]
 
 
@@ -494,3 +646,87 @@ def _fenced_code_blocks(text: str, cap: int) -> str:
         out.append(block)
         used += len(block) + 2
     return "\n\n".join(out)
+
+
+# ---------------------------------------------------------------- od 1.8.4: numery linii i uwagi do rundy poprawkowej
+def _record_view_lines(meta: dict, view_text: str, path: str | None = None) -> None:
+    """Zapamiętuje numery linii pokazane modelowi w lokalnym widoku pliku ('12| kod'): łącznie i (od 1.8.6) dla pliku."""
+    nums = {int(n) for n in re.findall(r"^(\d+)\| ", view_text or "", re.M)}
+    meta.setdefault("seen_lines", set()).update(nums)
+    if path:
+        meta.setdefault("seen_by_file", {}).setdefault(_path_key(path), set()).update(nums)
+
+
+_FILE_NAME_RE = re.compile(r"[\w./\\-]*?([A-Za-z_]\w*)\.(?:c|et|conf|layout)\b")
+
+
+def _seen_for(context: str, meta: dict) -> set[int] | None:
+    """Numery linii widziane w pliku, o którym mowa w kontekście odwołania (wiersz tabeli / linia tekstu).
+    Plik rozpoznajemy po nazwie pliku albo nazwie klasy równej nazwie pliku. None = nie wiadomo, o który plik chodzi."""
+    by_file = meta.get("seen_by_file", {})
+    names = {m.group(1).lower() for m in _FILE_NAME_RE.finditer(context)}
+    names |= {w.lower() for w in re.findall(r"\b([A-Z]\w{3,})\b", context)}
+    hits = [key for key in by_file if key.rsplit("/", 1)[-1].rsplit(".", 1)[0] in names]
+    if hits:
+        return set().union(*(by_file[k] for k in hits))
+    if any(m.group(1).lower() for m in _FILE_NAME_RE.finditer(context)):
+        return set()                  # plik nazwany, ale nigdy nie oglądany w widoku: żaden numer nie jest potwierdzony
+    return None
+
+
+_RANGE_RE = re.compile(r"(\d{1,5})(?:\s*[-‑–]\s*(\d{1,5}))?")
+
+
+def _line_refs(answer: str) -> list[tuple[str, int, int | None]]:
+    """Odwołania do numerów linii: w prozie ("linie 8-12") i w kolumnie tabeli o nagłówku "Linia/Linie..." (od 1.8.5)."""
+    text = re.sub(r"^\s*\d+\|.*$", "", answer, flags=re.M)        # przepisany widok z numerami to nie odwołanie
+    refs = []
+    for m in re.finditer(LINE_REF_RE, text, re.I):
+        line_start = text.rfind("\n", 0, m.start()) + 1
+        line_end = text.find("\n", m.end())
+        context = text[line_start:line_end if line_end >= 0 else len(text)]
+        refs.append((m.group(0).strip(), int(m.group(1)), int(m.group(2)) if m.group(2) else None, context))
+    col = None
+    for line in text.split("\n"):
+        cells = [c.strip() for c in line.strip().strip("|").split("|")] if line.strip().startswith("|") else None
+        if cells is None:
+            col = None
+            continue
+        if col is None:
+            col = next((i for i, c in enumerate(cells) if re.match(r"(?i)[*`]*lini", c)), None)
+            continue
+        if col < len(cells) and not re.fullmatch(r"[-:\s]*", cells[col]):
+            for m in _RANGE_RE.finditer(cells[col]):
+                refs.append((f"tabela: {cells[col]}", int(m.group(1)), int(m.group(2)) if m.group(2) else None, line))
+    return refs
+
+
+def _ref_unconfirmed(ref: tuple, meta: dict) -> bool:
+    _label, start, end, context = ref
+    seen = _seen_for(context, meta)
+    if seen is None:
+        seen = meta.get("seen_lines", set())
+    return start not in seen or (end is not None and end not in seen)
+
+
+def _line_ref_stats(answer: str, meta: dict) -> tuple[int, int, int]:
+    """Do logu: (odwołań do linii, ile numerów widział model w widokach, ile odwołań niepotwierdzonych)."""
+    refs = _line_refs(answer)
+    bad = [r for r in refs if _ref_unconfirmed(r, meta)]
+    return len(refs), len(meta.get("seen_lines", set())), len(bad)
+
+
+def _line_ref_problems(answer: str, meta: dict) -> list[str]:
+    """Numery linii w odpowiedzi, których model nie widział w żadnym widoku pliku (game_read nie numeruje linii)."""
+    bad = [ref[0] for ref in _line_refs(answer) if _ref_unconfirmed(ref, meta)]
+    if not bad:
+        return []
+    refs = ", ".join(f"'{b}'" for b in list(dict.fromkeys(bad))[:4]) + (" ..." if len(bad) > 4 else "")
+    return [QUOTE_LINES_NOT_SEEN.format(refs=refs)]
+
+
+def _quote_problems(answer: str, meta: dict, files: dict[str, str]) -> list[str]:
+    """Uwagi weryfikatora cytatów + numery linii spoza widoków: to, co uzasadnia rundę poprawkową."""
+    findings, _checked, _ok = _verify_answer(answer, files)
+    findings = [f for f in findings if not any(m in f for m in VERIFY_NO_FIX_MARKERS)]
+    return list(dict.fromkeys(findings + _line_ref_problems(answer, meta)))[:6]

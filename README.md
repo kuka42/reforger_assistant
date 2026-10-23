@@ -128,7 +128,7 @@ Ustawiasz je w launcherze (`set "NAZWA=wartość"`) albo w PowerShellu (`$env:NA
 
 |**Zmienna**|**Domyślnie**|**Opis**|
 |-|-|-|
-|`REFORGER_VERIFY`|`log`|Weryfikator cytatów: `off`, `log` (tylko wpisy w logu) albo `footer` (dodatkowo znacznik pod odpowiedzią)|
+|`REFORGER_VERIFY`|`fix`|Weryfikator cytatów: `off`, `log` (tylko wpisy w logu), `footer` (dodatkowo znacznik pod odpowiedzią) albo `fix` (runda poprawkowa, a uwagi, które zostały, pod odpowiedzią)|
 |`REFORGER_EMERGENCY_IN_HISTORY`|`placeholder`|`placeholder`: w kontekście modelu zostaje krótki znacznik zamiast treści odpowiedzi awaryjnej; `keep`: pełna treść|
 |`REFORGER_API_CHECK`<br />|`fix`|Kontrola nazw API w kodzie: fix (runda poprawkowa i ostrzeżenie), log (tylko wpis w logu), off|
 
@@ -139,7 +139,7 @@ Do modelu trafia wyłącznie osiem narzędzi **tylko do odczytu** z listy dozwol
 |**Narzędzie**|**Do czego służy**|
 |-|-|
 |`asset_search`|Szukanie plików i zasobów gry po nazwie|
-|`game_browse`|Przeglądanie katalogów gry (wzorzec dopasowuje **nazwy plików**, nie treść)|
+|`game_browse`|Przeglądanie katalogów gry (`pattern` to **tylko filtr rozszerzenia**, np. `*.c`; pliki po fragmencie nazwy szuka `asset_search`)|
 |`game_read`|Odczyt pliku z gry; asystent potrafi też lokalnie przeszukiwać odczytany plik i pokazywać zakres linii bez ponownego wywołania MCP|
 |`api_search`|Szukanie klas, metod i właściwości w API skryptów|
 |`component_search`|Szukanie komponentów (`ScriptComponent`)|
@@ -150,19 +150,34 @@ Do modelu trafia wyłącznie osiem narzędzi **tylko do odczytu** z listy dozwol
 
 * Poprawia typowe błędy wywołań narzędzi i wykrywa powtórzenia oraz pętle bez nowych danych.
 * Skraca długie wyniki tak, żeby zachować wszystkie deklaracje (nie ucina listy metod w połowie).
-* Oznacza wyniki wyszukiwania pierwszym wierszem `[Dokładne trafienie ...]` albo `[BRAK DOKŁADNEGO TRAFIENIA ...]`, żeby model nie traktował podobnej nazwy jako dowodu istnienia.
-* Przy pustej generacji po użyciu narzędzi ponawia próbę z niskim poziomem rozumowania, a dopiero potem składa odpowiedź awaryjną.
+* Oznacza wyniki wyszukiwania pierwszym wierszem `[Dokładne trafienie ...]` albo `[BRAK DOKŁADNEGO TRAFIENIA ...]`, żeby model nie traktował podobnej nazwy jako dowodu istnienia. Wyjątek: funkcje globalne (`GetGame`, `Print`, `PrintFormat`), których `api_search` nie indeksuje, dostają osobną notatkę, że brak trafienia nie znaczy „nie istnieje”.
+* Uzupełnia hierarchię klas. Dane API w BK mają dla wielu klas błędną hierarchię: brak klasy bazowej (np. `ArmaReforgerScripted`, `ChimeraWorld`) albo przodków wpisanych jako „Direct subclasses” (np. `SCR_ToggleSafetyUserAction`). Gdy model szuka dokładnej nazwy klasy, silnik czyta deklarację `class X : Y` z pliku gry i dopisuje prawdziwy łańcuch z nazwami metod klas bazowych. Wywołania silnika są widoczne w panelu MCP i w logu jako `[BAZA]`; nie wliczają się do limitu modelu.
+* Kontrola nazw API sama pobiera pełny widok klasy i jej przodków, zanim zgłosi nazwę jako niepotwierdzoną. Sprawdza też deklaracje: klasę bazową w `class X : Y`, klasę w `modded class X` i metody oznaczone `override`.
+* Gdy model zapyta `api_search` o dokładną nazwę klasy, dostaje pełny widok klasy (wszystkie metody), a nie skrót z 10 metod. Długie wyniki są skracane bez gubienia sygnatur.
+* Odrzuca od razu, bez zużywania limitu, wywołania, które z definicji nic nie dadzą: `game_browse` z `pattern` innym niż rozszerzenie i `asset_search` z fragmentem kodu w zapytaniu.
+* Kod opisany jako „z gry”, którego nie ma w odczytanym pliku, i numery linii, których model nie widział w żadnym widoku pliku, uruchamiają rundę poprawkową (tryb `REFORGER_VERIFY=fix`).
+* Pliki gry o nazwach wymienionych w pytaniu (np. `Weapon_Base`, `SCR_ToggleSafetyUserAction`) silnik wyszukuje od razu i podaje modelowi ścieżki (tylko dokładne nazwy plików). W logu: `[PYTANIE]`.
+* Numery linii są przypisywane do pliku, o którym mowa w zdaniu lub wierszu tabeli: numer widziany w widoku innego pliku nie potwierdza odwołania. Logi `[MCP]` pokazują parametry widoku (`+ widok linie 200-400`).
+* W kodzie własnej klasy wywołania bez obiektu (np. `GetEntity()` w komponencie) muszą istnieć w klasie bazowej lub jej przodkach; `GetComponent<T>()` jest zgłaszane jako składnia, której Enforce Script nie ma.
+* Numery linii sprawdzane są także w kolumnach tabel (nagłówek „Linia/Linie”). W logu `[LINIE]` widać, ile odwołań do linii ma odpowiedź i ile numerów model faktycznie widział w widokach pliku. Kontrola cytatów obejmuje też odpowiedzi napisane po przerwaniu wyszukiwania.
+* Wartości enumów w kodzie (np. `LogLevel.INFO`) są sprawdzane, gdy enum jest w odczytanych plikach albo wynikach `api_search`.
+* Dla funkcji globalnych (`Print`, `PrintFormat`, `GetGame`) `api_search` nie pokazuje mylących metod klas testowych o tej samej nazwie, tylko notatkę i listę takich klas.
+* Wymyślone narzędzia „szukaj w treści plików” (np. `game_search`): ze ścieżką do pliku zamieniane na `game_read` z `query`, bez ścieżki odrzucane z podpowiedzią.
+* Rundy poprawkowe (kontrola API, cytaty, wiedza przed kodem): model widzi swój odrzucony szkic. Jeśli poprawka ma więcej problemów niż pierwszy szkic, zostaje pierwszy szkic. W logu: `[SZKIC]`.
+* Przy pustej generacji po użyciu narzędzi ponawia próbę z niskim poziomem rozumowania, w tej samej rozmowie.
 * Prompt wymaga odróżniania faktów zweryfikowanych od założeń, oznaczania kodu jako „z kodu gry” tylko wtedy, gdy jest przepisany dosłownie z odczytu pliku, oraz opisania, co jeszcze trzeba przetestować w grze.
 
 ### Odpowiedzi awaryjne
 
-Stopka `_[Podsumowanie dostępnych wyników MCP: ...]_` oznacza, że badanie przerwano (pętla bez nowych danych, limit wywołań albo pusta odpowiedź modelu), a odpowiedź złożono z tego, co zebrano. Traktuj ją jako niepełną. W kontekście kolejnych pytań taka odpowiedź jest zastępowana krótkim znacznikiem, żeby jej błędy nie wracały jako fakty.
+Gdy wyszukiwanie zostaje przerwane (limit wywołań MCP albo seria rund bez nowych danych), model pisze odpowiedź **w tej samej rozmowie**, ze wszystkimi zebranymi wynikami, tylko bez dalszych narzędzi. Taka odpowiedź ma stopkę `_[Wyszukiwanie przerwane (...); odpowiedź na podstawie zebranych wyników, może być niepełna.]_`. W logu: `[KONIEC]`.
+
+Dopiero gdy model dwa razy nie odda kompletnego tekstu, silnik składa odpowiedź awaryjną z wybranych wyników (najpierw odczyty plików i dokładne trafienia). Ma ona stopkę `_[Podsumowanie dostępnych wyników MCP: ...]_`. Traktuj ją jako niepełną. W kontekście kolejnych pytań taka odpowiedź jest zastępowana krótkim znacznikiem, żeby jej błędy nie wracały jako fakty.
 
 ### Weryfikator cytatów
 
 Weryfikator sprawdza każdy blok kodu przypisany w odpowiedzi do pliku gry: czy jego linie (z pominięciem białych znaków i komentarzy) występują w tym pliku, który asystent odczytał w tej rozmowie. Zgłasza też sprzeczność w klasie bazowej (np. „`X` dziedziczy po `Y`”) oraz powołanie się na plik, którego nie odczytano. Uwagi widać w logu jako wpisy `[VERIFY]`. Przykładowe ścieżki i kod własny modelu (oznaczony jako szkic lub przykład) są pomijane.
 
-Weryfikator **nie** sprawdza wszystkiego: nie oceni np. wymyślonej wartości enuma ani opisu działania kodu w prozie.
+Weryfikator **nie** sprawdza wszystkiego: nie oceni np. opisu działania kodu w prozie ani źródeł podanych w tabelach (np. „metoda X pochodzi z pliku Y”).
 
 ## Dane lokalne i prywatność
 
@@ -212,7 +227,7 @@ Pytania i reguły są po polsku i dobrane pod `gpt-oss:20b`. Ocena regułowa jes
 |Zmiana modelu: „nie obsługuje wywoływania narzędzi”|Wybierz model z obsługą narzędzi|
 |Strona wygląda po staremu po podmianie plików|Odśwież z pominięciem pamięci podręcznej (Ctrl+F5)|
 |Odpowiedź trwa bardzo długo, w logu `reason=length`|Rozumowanie zużyło limit generacji. Asystent ponawia próbę z niskim rozumowaniem. Możesz też ustawić `OLLAMA_THINK=low` albo zmniejszyć `OLLAMA_NUM_PREDICT`|
-|Stopka `_[Podsumowanie dostępnych wyników MCP: ...]_`|Odpowiedź awaryjna, patrz [Odpowiedzi awaryjne](#odpowiedzi-awaryjne). Spróbuj zadać pytanie węziej|
+|Stopka `_[Wyszukiwanie przerwane ...]_` albo `_[Podsumowanie dostępnych wyników MCP: ...]_`|Wyszukiwanie przerwano, patrz [Odpowiedzi awaryjne](#odpowiedzi-awaryjne). Spróbuj zadać pytanie węziej|
 |Port zajęty|Uruchom z innym portem: `--port 8766`|
 |Polskie znaki rozsypane w konsoli lub logu|Uruchamiaj przez `START_ASSISTANT_WEB.cmd` (ustawia UTF-8)|
 

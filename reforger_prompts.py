@@ -22,7 +22,7 @@ TOOLS (exact names; no other tools exist)
 - asset_search(query, type, limit): searches file NAMES only, not file content.
   Use type 'script' for class names (SCR_*, *Component, *UserAction); type 'prefab' only for prefab names.
 - game_read(path): reads one game file (script, prefab, config).
-- game_browse(path, pattern): lists a directory.
+- game_browse(path, pattern): lists a directory; pattern is ONLY an extension filter ("*.c", "*.et").
 - component_search, wiki_search, wiki_read, wb_knowledge.
 There is NO search, grep, browser, python or shell tool. Never call them.
 Paths: scripts/Game/generated/<Group>/X.c are API stubs (proto external);
@@ -38,7 +38,7 @@ truncated snippets). wiki_read takes the page TITLE exactly as in the "## Title"
 result (e.g. "Scripting: Conventions"), never the Source URL or its Arma_Reforger:... slug.
 game_read also accepts query (search text inside the WHOLE file) and line_start/line_end.
 When a file is shown shortened, use query instead of guessing what the omitted part contains.
-game_browse "pattern" matches FILE NAMES (glob), never file content.
+game_browse "pattern" filters by file EXTENSION only ("*.c"); to find files by part of the name use asset_search.
 For a method or field name use api_search with type=method. If a name is not found after 2-3
 differently spelled searches, say that it was not found; do not keep guessing further names.
 Every API name used in code must be confirmed by a tool result in this conversation. When the user
@@ -249,3 +249,57 @@ API_QUERY_REWRITTEN = "zapytanie {old!r} -> {new!r} (api_search szuka po nazwie)
 API_CLASS_SEEN = "metoda {method} jest w wynikach także przy klasie {cls}"                            # {method} {cls}
 API_CLASS_NOT_SEEN = ("metoda {method} istnieje (w: {owners}); przy klasie {cls} nie widać jej w pokazanych "
                       "wynikach - lista może być ucięta, sprawdź api_search(query='{cls}', type='class')")  # {method} {owners} {cls}
+
+
+# ---------------------------------------------------------------- od 1.8.2
+NOTE_GLOBAL_FUNCTION = (              # {name} {info}
+    "[Funkcja globalna '{name}()': api_search indeksuje tylko składowe klas, więc funkcji globalnych w nim nie ma. "
+    "To NIE znaczy, że '{name}' nie istnieje. {info}]")
+NOTE_GLOBAL_OWNERS = ("\n[Metody klas o tej samej nazwie (to NIE jest funkcja globalna; nie twórz obiektów tych klas, "
+                      "żeby z nich korzystać): {owners}]")                                         # {owners} (od 1.8.5)
+NOTE_PARENTS = (                      # {name} {path} {chain} {bk} {members} {first}
+    "\n[Uzupełnienie asystenta: dane api_search mają dla {name} błędną hierarchię ({bk}); linie 'Inherits from', "
+    "'Direct subclasses' i metody dziedziczone powyżej mogą być niepełne lub mylące. Deklaracja w pliku gry {path}: "
+    "{chain}. Metody klas bazowych (same nazwy):\n{members}\n"
+    "Pełne sygnatury: api_search(query='{first}', type='class', limit=1).]")
+API_GAME_INSTANCE = "{cls}.{meth}: to metoda obiektu gry - wywołuj ją przez GetGame().{meth}(...)"   # {cls} {meth}
+API_CHAIN_NOT_SEEN = "{shown}: brak w wynikach narzędzi dla {cls} i jej klas bazowych ({chain})"      # {shown} {cls} {chain}
+
+
+# ---------------------------------------------------------------- od 1.8.3
+TOOL_BROWSE_PATTERN = (               # {pattern} {frag}
+    "pattern {pattern!r} nie zadziała: w game_browse pattern to WYŁĄCZNIE filtr rozszerzenia ('*.c', '*.et'), "
+    "inny wzorzec zwraca same katalogi. Pliki po fragmencie nazwy znajdziesz przez asset_search(query='{frag}'), "
+    "nazwę metody lub pola przez api_search(query='{frag}', type='method'). Wywołanie nie zużyło limitu.")
+TOOL_ASSET_CODE_QUERY = (             # {query}
+    "asset_search szuka tylko w NAZWACH plików, a {query!r} wygląda na fragment kodu. Nazwę metody sprawdź przez "
+    "api_search(type='method'), funkcję globalną (Print, GetGame) przez wiki_search, plik po nazwie klasy przez "
+    "asset_search(query='NazwaKlasy', type='script'). Wywołanie nie zużyło limitu.")
+API_EXACT_CLASS_NOTE = "'{name}' to dokładna nazwa klasy -> pełny widok klasy (type=class, limit=1)"   # {name}
+HINT_FINAL_NO_TOOLS = (               # {cause}
+    "[Uwaga systemowa] Wyszukiwanie zostało zakończone ({cause}); narzędzia nie są już dostępne. Napisz TERAZ "
+    "końcową odpowiedź na pytanie użytkownika na podstawie wyników narzędzi powyżej. Czego nie znalazłeś, opisz "
+    "wprost jako nieznalezione; nie zgaduj nazw. Nie wywołuj narzędzi.")
+FOOTER_STOPPED = ("\n\n_[Wyszukiwanie przerwane ({cause}); odpowiedź na podstawie zebranych wyników, "
+                  "może być niepełna.]_")                                                          # {cause}
+API_DECL_NO_CLASS = "{decl}: klasy {target} nie ma w wynikach narzędzi (API)"                        # {decl} {target}
+API_DECL_NO_OVERRIDE = "override {meth} w {cls}: brak metody {meth} w {target} i jej klasach bazowych"  # {meth} {cls} {target}
+
+
+# ---------------------------------------------------------------- od 1.8.4
+TOOL_CONTENT_SEARCH = (               # {name}
+    "Nie ma narzędzia {name!r} ani wyszukiwania w treści wielu plików. Metodę lub pole znajdziesz przez "
+    "api_search(query='Nazwa', type='method'), plik po nazwie przez asset_search(query='Nazwa', type='script'), "
+    "a tekst w znanym pliku przez game_read(path='...', query='tekst'). Wywołanie nie zużyło limitu.")
+HINT_QUOTE_FIX = (                    # {problems}
+    "[Uwaga systemowa] Cytaty w Twojej odpowiedzi nie zgadzają się z odczytanymi plikami: {problems}. "
+    "Kod oznaczony jako z gry przepisz DOSŁOWNIE z wyniku game_read albo oznacz go jako szkic. Numery linii podawaj "
+    "tylko z widoku pliku (game_read z line_start/line_end albo query); w przeciwnym razie je usuń.")
+QUOTE_LINES_NOT_SEEN = ("numery linii {refs} nie pochodzą z żadnego widoku pliku w tej rozmowie "
+                        "(game_read nie numeruje linii)")                                            # {refs}
+
+
+# ---------------------------------------------------------------- od 1.8.6
+API_DECL_NO_IMPLICIT = "{meth}() w {cls}: brak metody {meth} w {target} i jej klasach bazowych (wywołanie bez obiektu)"  # {meth} {cls} {target}
+QUESTION_FILES_NOTE = ("\n\n[Silnik: pliki gry o nazwach wymienionych w pytaniu (dokładna nazwa pliku z asset_search): "
+                       "{files}. Zacznij od nich (game_read).]")                                      # {files}

@@ -4,14 +4,14 @@ from __future__ import annotations
 import os
 
 
-VERSION = "1.8.1-fixes"
+VERSION = "1.8.6"
 
 # Ścieżki potwierdzone podczas poprzednich testów użytkownika — edytowalne.
 MCP_SCRIPT = os.environ.get(
-    "ENFUSION_MCP_SCRIPT", r"C:\enfusion-mcp-BK\dist\index.js"
+    "ENFUSION_MCP_SCRIPT", r"F:\reforger-scripts\enfusion-mcp-BK\dist\index.js"
 )
 GAME_PATH = os.environ.get(
-    "ENFUSION_GAME_PATH", r"C:\Program Files\Steam\steamapps\common\Arma Reforger"
+    "ENFUSION_GAME_PATH", r"D:\SteamLibrary\steamapps\common\Arma Reforger"
 )
 
 def _env_int(name: str, default: int) -> int:
@@ -51,11 +51,12 @@ OLLAMA_TEMPERATURE = _env_float("OLLAMA_TEMPERATURE", 0.1)
 OLLAMA_THINK = os.environ.get("OLLAMA_THINK", "")   # np. low / medium / high; puste = nie wysyłaj
 THINKING_KEEP_CHARS = _env_int("REFORGER_THINKING_CHARS", 3000)   # ile końcówki rozumowania zostaje w kontekście w obrębie tury; 0 = nic, -1 = całość
 VIEW_LIMIT_PER_FILE = _env_int("REFORGER_VIEW_LIMIT", 6)    # max lokalnych widoków (query/zakres) jednego pliku w turze
-# Weryfikator cytatów: off = wyłączony; log = tylko wpisy [VERIFY] w logu (domyślnie);
-# footer = dodatkowo dopisuje znacznik na końcu odpowiedzi.
-VERIFY_MODE = os.environ.get("REFORGER_VERIFY", "log").strip().lower()
-if VERIFY_MODE not in ("off", "log", "footer"):
-    VERIFY_MODE = "log"
+# Weryfikator cytatów: off = wyłączony; log = tylko wpisy [VERIFY] w logu; footer = dodatkowo znacznik pod odpowiedzią;
+# fix (domyślnie od 1.8.4) = jedna runda poprawkowa (cytat "z kodu gry", którego nie ma w pliku; numery linii
+# spoza widoków pliku), a uwagi, które zostały, trafiają pod odpowiedź.
+VERIFY_MODE = os.environ.get("REFORGER_VERIFY", "fix").strip().lower()
+if VERIFY_MODE not in ("off", "log", "footer", "fix"):
+    VERIFY_MODE = "fix"
 # Kontrola nazw API w kodzie odpowiedzi: off; log (tylko wpis [API] w logu); fix (domyślnie: jedna runda
 # poprawkowa, a gdy nazwy nadal są niepotwierdzone, ostrzeżenie pod odpowiedzią).
 API_CHECK_MODE = os.environ.get("REFORGER_API_CHECK", "fix").strip().lower()

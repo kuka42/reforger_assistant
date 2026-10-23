@@ -1,8 +1,10 @@
 # TODO
 
-## Funkcje do wprowadzenia
+## Funkcje do wprowadzenia:
 
-### Możliwość wyboru ścieżek do serwera 
+* ### Możliwość wyboru ścieżek do serwera
+
 ### Enfusion MCP BK i Arma Reforger wewnątrz interfejsu
 
-### Obsługa innych języków
+* ### Obsługa innych języków
+

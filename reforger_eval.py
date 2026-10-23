@@ -131,6 +131,41 @@ def entity_getprefabname_call(text: str) -> bool:
     return False
 
 
+_LINE_REF = re.compile(r"\(\s*linia\s*~?\s*(\d+)|linii\s*~?\s*(\d+)\s*[-‑–]\s*\d+|\blinia\s*~?\s*(\d+)\s*[-‑–]\s*\d+", re.I)
+
+
+def invented_line_numbers(text: str) -> bool:
+    """Numery linii w odpowiedzi. Od 1.8.4 nie liczymy tych, które odpowiedź pokazuje w przepisanym widoku
+    pliku ('75| ...'): pochodzą z lokalnego widoku (game_read z query/line_start) i są prawdziwe."""
+    shown = {int(n) for n in re.findall(r"^\s*(\d+)\|", text, re.M)}
+    for m in _LINE_REF.finditer(text):
+        start = int(next(g for g in m.groups() if g))
+        if start not in shown:
+            return True
+    return False
+
+
+def default_as_inspection(text: str) -> bool:
+    """'default' opisany jako tryb inspekcji. Nie liczymy poprawnego rozumowania: kontekst 'default',
+    a widoczność w inspekcji zapewnia CanBeShownScript klasy SCR_InspectionUserAction."""
+    for m in re.finditer(r"default[^\n]{0,60}(tryb\w*\s+inspekcj|czyli\s+w\s+trybie)", text, re.I):
+        if not re.search(r"CanBeShown", m.group(0)):
+            return True
+    return False
+
+
+def recommends_scr_prefix(text: str) -> bool:
+    """Zalecenie prefiksu SCR_ dla moda. Od 1.8.6 nie liczymy zdań, które opisują SCR_ jako prefiks gry albo
+    każą użyć własnego tagu ZAMIAST SCR_ (np. "w bazie gry skrypty mają prefiks SCR_ ... użyj MY_ zamiast SCR_")."""
+    for m in re.finditer(r"(prefiks\w*|zaczyna\w*\s+od|użyj\w*)\s+[^\n]{0,20}SCR_", text, re.I):
+        line_start = text.rfind("\n", 0, m.start()) + 1
+        line_end = text.find("\n", m.end())
+        line = text[line_start:line_end if line_end >= 0 else len(text)]
+        if not re.search(r"zamiast|w\s+bazie\s+gry|gry\s+maj|prefiks\w*\s+gry|zarezerwowan|nie\s+używ", line, re.I):
+            return True
+    return False
+
+
 # Błędy, które wystąpiły w różnych testach (sprawdzane w KAŻDEJ odpowiedzi).
 COMMON_BAD = [
     ("blok oznaczony 'z kodu gry' bez wskazania pliku (kod własny opisany jako cytat z gry)", game_label_without_file),
@@ -139,7 +174,7 @@ COMMON_BAD = [
     ("nieistniejąca klasa bazowa SCR_Component", rx(r":\s*SCR_Component\b")),
     ("operator ?. (nie widziałem go w Enforce Script - podejrzane)", rx(r"\)\s*\?\s*\.\s*\w")),
     ("'w pełni zweryfikowane' (nadmierna pewność)", rx(r"w pełni zweryfikowan")),
-    ("numery linii w plikach (game_read ich nie zwraca - wymysł)", rx(r"\(\s*linia\s*~?\s*\d+|linii\s*~?\s*\d+\s*[-‑–]\s*\d+|\blinia\s*~?\s*\d+\s*[-‑–]\s*\d+")),
+    ("numery linii w plikach (game_read ich nie zwraca - wymysł)", invented_line_numbers),
 ]
 
 
@@ -212,7 +247,7 @@ TESTS = [
                     ("XML zamiast formatu .et", rx(r"<ActionsManagerComponent|<additionalActions|<action>")),
                     ("ponowna deklaracja m_WeaponComponent", rx(r"protected\s+BaseWeaponComponent\s+m_WeaponComponent")),
                     ("wymyślona ikona bez oznaczenia", invented_icon),
-                    ("'default' jako 'tryb inspekcji'", rx(r"default[^\n]{0,60}(tryb\w*\s+inspekcj|czyli\s+w\s+trybie)")),
+                    ("'default' jako 'tryb inspekcji'", default_as_inspection),
                     ("log opisany jako serwerowy (akcja ma efekt lokalny)",
                      rx(r"(Logujemy|wypisze|Print)[^\n]{0,80}(na serwerze|konsol\w+ serwera)|(na serwerze|konsol\w+ serwera)[^\n]{0,80}Print")),
                 ],
@@ -392,13 +427,17 @@ TESTS = [
         "rules": [{
             "must": [
                 ("prefiks / modder tag", rx(r"prefiks|tag\b|TAG_|ABC_")),
-                ("katalogi Game i GameCode", all_of(r"\bGame\b", r"GameCode")),
-                ("skrypty poza modułami są ignorowane", rx(r"ignor|pomijan|nie zostan|nie będ\w+ załadowan")),
                 ("podane źródło (wiki)", rx(r"community\.bistudio|wiki|Scripting[:_ ]+_?Conventions|Scripting[ _]Modding|Scripting[ _]Example|Conventions")),
                 ("SCR_ to prefiks gry, mod ma własny tag", rx(r"SCR_[^\n]{0,120}(Bohemia|\bBI\b|zarezerwowan|gr[ęay]\b|wbudowan|własn\w+\s+tag|nie\s+używ)")),
             ],
+            # Od 1.8.4: tej wiedzy nie ma w danych BK (wiki BK nie opisuje modułów skryptów), więc nie wlicza się
+            # do wyniku; pokazujemy ją osobno.
+            "bonus": [
+                ("katalogi Game i GameCode", all_of(r"\bGame\b", r"GameCode")),
+                ("skrypty poza modułami są ignorowane", rx(r"ignor|pomijan|nie zostan|nie będ\w+ załadowan")),
+            ],
             "bad": [
-                ("zaleca prefiks SCR_ dla modów", rx(r"(prefiks\w*|zaczyna\w*\s+od|użyj\w*)\s+[^\n]{0,20}SCR_")),
+                ("zaleca prefiks SCR_ dla modów", recommends_scr_prefix),
                 ("przykłady z prefiksem SCR_ (prefiks gry) bez zastrzeżenia",
                  lambda t: bool(re.search(r"(np\.|e\.g\.|przykład\w*)[^\n]{0,40}`?SCR_|class\s+SCR_\w+|SCR_(MyObject|Example\w*)", t, I))
                  and not re.search(r"SCR_[^\n]{0,120}(Bohemi|\bBI\b|zarezerwowan|należy do gry|prefiks gry|nie\s+używ|wbudowan|w\s+gr[ęy]\b|gry\b)", t, I)),
@@ -438,7 +477,8 @@ def cmd_questions() -> None:
 def evaluate_answer(text: str, rules: dict) -> dict:
     must = [(label, bool(fn(text))) for label, fn in rules["must"]]
     bad = [label for label, fn in list(rules["bad"]) + COMMON_BAD if fn(text)]
-    return {"must": must, "bad": bad}
+    bonus = [(label, bool(fn(text))) for label, fn in rules.get("bonus", [])]
+    return {"must": must, "bad": bad, "bonus": bonus}
 
 
 def cmd_score(path: Path, md_path: Path | None) -> None:
@@ -510,6 +550,10 @@ def cmd_score(path: Path, md_path: Path | None) -> None:
                 prefix = f"tura {ti}: " if len(test["turns"]) > 1 else ""
                 out(f"- {prefix}wymagane {hit}/{tot}" + (f"; brakuje: {'; '.join(missing)}" if missing else ""))
                 out(f"- {prefix}błędy znane: {len(res['bad'])}" + (f" -> {'; '.join(res['bad'])}" if res["bad"] else ""))
+                if res.get("bonus"):
+                    got = [label for label, ok in res["bonus"] if ok]
+                    out(f"- {prefix}spoza danych BK (nie wlicza się): {len(got)}/{len(res['bonus'])}"
+                        + (f" -> {'; '.join(got)}" if got else ""))
                 if res.get("no_guess"):
                     out(f"- {prefix}UWAGA: to komunikat awaryjny ('nie zgaduję'), nie odpowiedź merytoryczna")
             out("")
@@ -595,9 +639,16 @@ def cmd_log(path: Path) -> None:
             "STALL": len(re.findall(r"\[STALL\]", body)),
             "pusta odpowiedź": len(re.findall(r"Pusta odpowied", body)),
             "UWAGA kontekst": len(re.findall(r"\[UWAGA\]", body)),
-            "synteza awaryjna": len(re.findall(r"Zatrzymano dalsze|Limit MCP|osobna synteza z dowodow", body)),
+            "synteza awaryjna": len(re.findall(r"osobna synteza|synteza awaryjna z wybranych", body)),   # stare i nowe logi
             "ponowienie po pustej generacji": len(re.findall(r"ponowienie z niskim", body)),
             "limit generacji (reason=length)": len(re.findall(r"reason=length", body)),
+            # od 1.8.3
+            "odpowiedź bez narzędzi [KONIEC]": len(re.findall(r"\[KONIEC\] odpowiedź bez narzędzi", body)),
+            "szkic odrzucony [SZKIC]": len(re.findall(r"\[SZKIC\] odrzucony", body)),
+            "zostaje pierwszy szkic": len(re.findall(r"zostaje pierwszy szkic", body)),
+            "odrzucone wywołanie (bez limitu)": len(re.findall(r"Wywołanie nie zużyło limitu", body)),
+            "pełny widok klasy (limit=1)": len(re.findall(r"pełny widok klasy", body)),
+            "hierarchia z pliku gry [BAZA]": len(re.findall(r"\[BAZA\] \w+: klasy bazowe z pliku gry \S+ -> (?!nie ustalono)", body)),
         }
         last = outs[-1] if outs else ("?", "?")
         print(f"Tura {i}: wywołań MCP {calls}, błędów {errors}, "
