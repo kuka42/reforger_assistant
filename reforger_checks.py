@@ -7,7 +7,7 @@ import re
 from reforger_i18n import tr
 from reforger_prompts import FOOTER_VERIFY, FOOTER_VERIFY_MORE, FOOTER_API
 from reforger_prompts import API_GAME_INSTANCE, API_CHAIN_NOT_SEEN, API_DECL_NO_CLASS, API_DECL_NO_OVERRIDE, API_DECL_NO_IMPLICIT
-from reforger_prompts import QUOTE_LINES_NOT_SEEN
+from reforger_prompts import QUOTE_LINES_NOT_SEEN, API_ENUM_NOT_SEEN
 from reforger_prompts import (API_SCR_TAG_CLASS, API_SCR_TAG_TEXT, API_RETURN_TYPE, SYNTAX_PREFAB_JSON,
                               SYNTAX_PRINTFORMAT, SYNTAX_ENTRY_CLASS,
                               MARK_QUOTE_BLOCK, MARK_SYNTAX_BLOCK, MARK_LINE_REF, MARK_UNREAD_BLOCK,
@@ -323,6 +323,9 @@ def _strip_code_noise(code: str) -> str:
     return re.sub(r'"(?:\\.|[^"\\\n])*"', '""', code)
 
 
+_BUILTIN_RECEIVERS = {"vector", "string", "float", "int", "bool", "array", "map", "set", "typename"}
+
+
 def _api_calls(answer: str) -> list[tuple]:
     """Wywołania API w blokach kodu odpowiedzi: (klasa | None, metoda, rodzaj).
     rodzaj: 'static' (Klasa.Metoda), 'game' (GetGame().Metoda), 'instance' (zmienna.Metoda), 'global' (Metoda)."""
@@ -342,10 +345,12 @@ def _api_calls(answer: str) -> list[tuple]:
             if cls in _API_CLASS_OK or meth in _API_METHOD_OK:
                 continue
             calls.append((cls, meth, "static"))
-        for m in re.finditer(r"(?:(?<![\w.])[a-z_]\w*|[)\]])\s*\.\s*([A-Za-z_]\w*)\s*\(", code):
-            meth = m.group(1)
+        for m in re.finditer(r"(?:(?<![\w.])([a-z_]\w*)|[)\]])\s*\.\s*([A-Za-z_]\w*)\s*\(", code):
+            meth = m.group(2)
             if code[:m.start() + 1].endswith("GetGame()"):
                 continue
+            if m.group(1) in _BUILTIN_RECEIVERS:
+                continue              # od 2.0.3: metody typów wbudowanych (vector.Distance, string.Format)
             if meth in _API_METHOD_OK or meth in own:
                 continue
             calls.append((None, meth, "instance"))
@@ -476,6 +481,17 @@ def _enum_values(texts: list[str], enum: str) -> set[str] | None:
     return None
 
 
+def _enum_refs(answer: str) -> list[tuple[str, str]]:
+    """(Enum, WARTOŚĆ) z kodu odpowiedzi (od 2.0.3 wspólne dla kontroli i silnika)."""
+    codes = [_strip_code_noise(block) for lang, block in _API_CODE_BLOCK_RE.findall(answer)
+             if not (lang.lower() in _NON_CODE_LANGS or _PREFAB_LIKE_RE.search(block))]
+    codes += re.findall(r"`([^`\n]+)`", _API_CODE_BLOCK_RE.sub("", answer))
+    refs = []
+    for code in codes:
+        refs += re.findall(r"(?<![\w.])([A-Z]\w*)\.([A-Z][A-Z0-9_]+)\b(?!\s*\()", code)
+    return [r for r in dict.fromkeys(refs) if r[0] not in _API_CLASS_OK]
+
+
 def _enum_problems(answer: str, texts: list[str]) -> list[str]:
     """Enum.WARTOŚĆ w kodzie odpowiedzi, gdy enum jest w dowodach, a takiej wartości w nim nie ma (np. LogLevel.INFO)."""
     problems = []
@@ -491,7 +507,21 @@ def _enum_problems(answer: str, texts: list[str]) -> list[str]:
                 shown = ", ".join(sorted(values)[:10])
                 problems.append(tr(f"{enum}.{value}: wartości {value} nie ma w enumie {enum} (są: {shown})",
                                    f"{enum}.{value}: the value {value} is not in the enum {enum} (values: {shown})"))
-    return problems
+            elif values is None and enum not in _API_CLASS_OK and not _word_seen(texts, value):
+                # Od 2.0.3: wartość, której nie ma w żadnym wyniku narzędzi (np. SCR_EXPRewards.SUPPLY_DELIVERY
+                # opisane jako "istniejące", choć api_search enuma nie znalazł).
+                problems.append(API_ENUM_NOT_SEEN.format(enum=enum, value=value))
+    return list(dict.fromkeys(problems))
+
+
+_NOT_FOUND_LINE_RE = re.compile(r"^[^\n]*\b(?:No \w+(?: \w+)? found|not found|BRAK DOKŁADNEGO|NO EXACT MATCH)[^\n]*$",
+                                re.M | re.I)
+
+
+def _word_seen(texts: list[str], word: str) -> bool:
+    """Słowo występuje w wynikach narzędzi poza liniami typu "No enums found for 'X'" (od 2.0.3)."""
+    w_re = re.compile(rf"\b{re.escape(word)}\b")
+    return any(w_re.search(_NOT_FOUND_LINE_RE.sub("", t)) for t in texts)
 
 
 def _game_classes(meta: dict) -> list[str]:

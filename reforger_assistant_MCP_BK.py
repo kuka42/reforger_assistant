@@ -100,6 +100,9 @@ try:
         NOTE_SUBCLASSES,
         NOTE_SEARCH_MISS_FILE,
         NOTE_GLOBAL_DECL,
+        NOTE_ENUM_DECL,
+        HINT_COMPILE_FULL_CODE,
+        HINT_BUDGET,
         DOC_HIERARCHY_SOURCE,
         TOOL_ACTION_BLOCKED,
         SYSTEM_PROMPT,
@@ -233,6 +236,10 @@ try:
         _collapse_repeats,
         _annotate_answer,
         _sync_entry_classes,
+        _enum_refs,
+        _enum_values,
+        _word_seen,
+        _NOT_FOUND_LINE_RE,
     )
     from reforger_mcp import (  # noqa: F401
         MCPError,
@@ -337,6 +344,8 @@ _SHORT_PREFIXES = ("[SKRÓT", "[SHORTENED")
 NO_MATCHES_FOR = tr("Brak dopasowań dla", "No matches for")
 MCP_TOOL_ERROR = tr("BŁĄD NARZĘDZIA MCP:", "MCP TOOL ERROR:")
 ERROR_PREFIX = tr("BŁĄD", "ERROR")
+BUDGET_HINT_AT = 15                      # od 2.0.3: po tylu wywołaniach MCP jednorazowe przypomnienie o limicie
+NEED_CODE_MARK = "\x00need_code"          # od 2.0.3: wewnętrzny znacznik "brak kodu po błędzie kompilacji"
 CALL_FIX_NOTE = tr("\n[korekta wywołania: ", "\n[call correction: ")
 
 
@@ -916,6 +925,18 @@ def _prepare_api_evidence(content: str, meta: dict, session_files: dict, mcp) ->
             # Obiekt gry: plik ArmaReforgerScripted.c może nie istnieć; sprawdzamy stałą listę klas gry.
             for cls in _game_classes(meta)[1:]:
                 add(cls)
+    # Od 2.0.3: Enum.WARTOŚĆ, której nie ma w dowodach - silnik szuka deklaracji enuma (najwyżej 2 na sprawdzenie).
+    resolved = 0
+    for enum, value in _enum_refs(content):
+        texts = _evidence_texts(meta, session_files)
+        if resolved >= 2 or enum in meta.setdefault("enum_tried", set()) or _enum_values(texts, enum) is not None \
+                or _word_seen(texts, value):
+            continue
+        meta["enum_tried"].add(enum)
+        resolved += 1
+        path, decl = _resolve_enum(mcp, meta, session_files, enum)
+        if path:
+            meta.setdefault("enum_notes", []).append(NOTE_ENUM_DECL.format(name=enum, path=path, decl=decl))
 
 
 def _final_check_footer(content: str, meta: dict, session_files: dict, mcp, where: str) -> str:
@@ -993,6 +1014,69 @@ def _global_decl(mcp, name: str) -> tuple[str, str, str]:
              f"  [GLOBAL] {name}: {('declaration from ' + out[0]) if out[0] else 'file with the declaration not found'}"),
           flush=True)
     return out
+
+
+_ENUM_DECLS: dict[str, tuple[str, str, str]] = {}       # enum -> (ścieżka, deklaracja, pełny tekst pliku)
+
+
+def _owner_classes(texts: list[str], name: str) -> list[str]:
+    """Klasy, w których wynikach narzędzi pada nazwa (np. typ parametru: AwardXP(int playerId, SCR_EXPRewards rewardID)):
+    właściciel z wiersza 'Klasa.Metoda(' albo z najbliższego nagłówka '## Klasa' nad wystąpieniem."""
+    owners: list[str] = []
+    w_re = re.compile(rf"\b{re.escape(name)}\b")
+    for raw in texts:
+        text = _NOT_FOUND_LINE_RE.sub("", raw)
+        for m in w_re.finditer(text):
+            start = text.rfind("\n", 0, m.start()) + 1
+            end = text.find("\n", m.start())
+            line = text[start:end if end >= 0 else len(text)]
+            o = re.match(r"^\s*(?:\d+\.\s*|\*\*Method:\*\*\s*)?([A-Z]\w*)\.", line)
+            if o:
+                owners.append(o.group(1))
+                continue
+            heads = re.findall(r"^##\s+([A-Za-z_]\w*)\s*$", text[:m.start()], re.M)
+            if heads:
+                owners.append(heads[-1])
+    return [o for o in dict.fromkeys(owners) if o != name][:2]
+
+
+def _resolve_enum(mcp, meta: dict, session_files: dict, name: str) -> tuple[str, str]:
+    """Od 2.0.3: deklaracja enuma, którego api_search nie zna (BK nie indeksuje wielu enumów ze skryptów, np.
+    SCR_EXPRewards). Szuka pliku o nazwie enuma, a potem plików klas, w których wynikach enum pada jako typ
+    (zwykle enum leży w pliku klasy, która go używa). Tylko dokładne nazwy plików; nic nie zgaduje."""
+    if name in _ENUM_DECLS:
+        path, decl, text = _ENUM_DECLS[name]
+        if text:
+            _add_evidence(meta, text)
+            session_files[_path_key(path)] = text
+        return path, decl
+    out = ("", "", "")
+    cands: list[str] = []
+    tools = getattr(mcp, "tools", {})
+    if "game_read" in tools and "asset_search" in tools:
+        cands = [p for p in _exact_game_files(mcp, name) if p.lower().endswith(".c")][:1]
+        for owner in _owner_classes(_evidence_texts(meta, session_files), name):
+            cands += [p for p in _exact_game_files(mcp, owner) if p.lower().endswith(".c")][:1]
+        decl_re = re.compile(rf"^[^\n]*\benum\s+{re.escape(name)}\b[^{{;]*\{{.*?\}}", re.S | re.M)
+        for path in list(dict.fromkeys(cands))[:3]:
+            result = mcp.call_tool("game_read", {"path": path})
+            if result.get("isError"):
+                continue
+            text = _raw_text(result)
+            m = decl_re.search(text)
+            if m:
+                decl = m.group(0).strip()
+                decl = decl if len(decl) <= 3000 else decl[:3000] + "\n..."
+                session_files[_path_key(path)] = text
+                _add_evidence(meta, text)
+                out = (path, decl, text)
+                break
+    _ENUM_DECLS[name] = out
+    if not out[0] and not cands:
+        return "", ""                  # nic do sprawdzenia (brak pliku enuma i klas, które go używają): bez wpisu w logu
+    print(tr(f"  [ENUM] {name}: {('deklaracja z ' + out[0]) if out[0] else 'nie znaleziono deklaracji'}",
+             f"  [ENUM] {name}: {('declaration from ' + out[0]) if out[0] else 'declaration not found'}"), flush=True)
+    return out[0], out[1]
 
 
 def _search_miss_file_note(mcp, query) -> str:
@@ -1587,6 +1671,10 @@ def _ask_impl(question: str, messages: list[dict], mcp: MCPStdioClient,
     misses: list[str] = []
     meta = _session_meta(messages)       # wyniki narzędzi w sesji i nazwy odrzucone przez kompilator
     meta["kb_this_turn"] = False         # czy w tej turze ktoś (model albo silnik) sięgnął do wb_knowledge
+    meta["budget_hint"] = False
+    meta["compile_turn"] = False         # od 2.0.3: czy pytanie zgłasza błąd kompilacji (wtedy odpowiedź musi mieć kod)
+    meta["enum_tried"] = set()           # od 2.0.3: enumy, których deklaracji silnik szukał w tej turze
+    meta.pop("enum_notes", None)
     meta["resolve_budget"] = PARENT_RESOLVE_PER_TURN   # ile klas bazowych silnik może ustalić w tej turze
     meta.setdefault("chains", {})
     kb_rounds = 0
@@ -1596,6 +1684,7 @@ def _ask_impl(question: str, messages: list[dict], mcp: MCPStdioClient,
     if API_CHECK_MODE != "off":
         try:
             pending_hint = _compile_error_lookup(question, meta, mcp, messages)
+            meta["compile_turn"] = pending_hint is not None      # od 2.0.3: odpowiedź musi zawierać poprawiony kod
         except Exception as exc:  # kontrola nigdy nie psuje tury
             print(tr(f"  [API] sprawdzenie błędu kompilatora pominięte: {exc!r}",
                      f"  [API] compiler error check skipped: {exc!r}"), flush=True)
@@ -1764,16 +1853,26 @@ def _ask_impl(question: str, messages: list[dict], mcp: MCPStdioClient,
                              f"  [LINES] line number references: {refs}; numbers from views in the conversation: {seen_n}; "
                              f"unconfirmed: {bad_n}"), flush=True)
             api_fixable = API_CHECK_MODE == "fix" and bool(problems or syntax)
+            # Od 2.0.3: po zgłoszonym błędzie kompilacji odpowiedź bez bloku kodu (sam opis poprawki) to też problem.
+            need_code = bool(meta.get("compile_turn")) and content and "```" not in content
+            if need_code:
+                quote = quote + [NEED_CODE_MARK]
+                print(tr("  [KOD] po błędzie kompilacji brak poprawionego kodu w odpowiedzi",
+                         "  [CODE] no corrected code in the answer after a compile error"), flush=True)
             if (api_fixable or quote) and api_fix_rounds < 1 and count < MAX_TOOL_CALLS:
                 api_fix_rounds += 1
                 phase(tr("Sprawdzam nazwy API i cytaty w odpowiedzi", "Checking API names and quotes in the answer"))
+                quote_only = [q for q in quote if q != NEED_CODE_MARK]
                 parts = ([HINT_API_FIX.format(problems="; ".join(problems))] if api_fixable and problems else []) + (
+                    meta.pop("enum_notes", [])) + (
                     [HINT_SYNTAX_FIX.format(problems="; ".join(syntax))] if api_fixable and syntax else []) + (
-                    [HINT_QUOTE_FIX.format(problems="; ".join(quote))] if quote else []) + (
+                    [HINT_QUOTE_FIX.format(problems="; ".join(quote_only))] if quote_only else []) + (
+                    [HINT_COMPILE_FULL_CODE] if need_code else []) + (
                     [kb_hint] if kb_hint else [])
                 first_draft = first_draft or (content, problems, syntax, quote)
                 reason = " + ".join(r for r, on in ((tr("kontrola API", "API check"), api_fixable),
-                                                    (tr("cytaty", "quotes"), bool(quote)),
+                                                    (tr("cytaty", "quotes"), bool(quote_only)),
+                                                    (tr("brak kodu", "missing code"), bool(need_code)),
                                                     (tr("wiedza", "knowledge"), bool(kb_hint))) if on)
                 _push_draft(messages, content, "\n\n".join(parts), reason)
                 continue          # szkic odrzucony: model poprawia go, widząc go w kontekście tury
@@ -2072,6 +2171,17 @@ def _ask_impl(question: str, messages: list[dict], mcp: MCPStdioClient,
                                     print(tr(f"  [PLIK] sprawdzenie pliku pominięte z powodu błędu: {exc!r}",
                                              f"  [FILE] file check skipped because of an error: {exc!r}"), flush=True)
                                     miss = ""
+                                if (not miss and re.fullmatch(r"[A-Z][A-Za-z0-9_]{2,}", _norm_query(arguments.get("query")))
+                                        and str(arguments.get("type", "any")).lower() != "method"
+                                        and not re.match(r"(?:Get|Set|Is|Has|Can|On|Try|Add|Remove)[A-Z]",
+                                                         _norm_query(arguments.get("query")))):
+                                    try:      # od 2.0.3: enum spoza indeksu BK - deklaracja z pliku klasy, która go używa
+                                        epath, edecl = _resolve_enum(mcp, meta, session_files, _norm_query(arguments.get("query")))
+                                    except Exception as exc:  # j.w.
+                                        print(f"  [ENUM] {exc!r}", flush=True)
+                                        epath = edecl = ""
+                                    if epath:
+                                        miss = NOTE_ENUM_DECL.format(name=_norm_query(arguments.get("query")), path=epath, decl=edecl)
                                 if miss:
                                     response += miss
                                     successful_tool = True
@@ -2100,6 +2210,14 @@ def _ask_impl(question: str, messages: list[dict], mcp: MCPStdioClient,
                 result_msgs[new_signature] = tool_msg
             _compact_tool_context(messages)
         failed_rounds = 0 if successful_tool else failed_rounds + 1
+        if count >= BUDGET_HINT_AT and not meta.get("budget_hint") and count < MAX_TOOL_CALLS:
+            # Od 2.0.3: jednorazowe przypomnienie o limicie (test "popraw skrypt": 25 wywołań bez odczytu głównego pliku).
+            meta["budget_hint"] = True
+            print(tr(f"  [LIMIT] {count}/{MAX_TOOL_CALLS} wywołań MCP - przypomnienie o limicie",
+                     f"  [LIMIT] {count}/{MAX_TOOL_CALLS} MCP calls - limit reminder"), flush=True)
+            if pending_hint is None:
+                pending_hint = {"role": "user", "content": HINT_BUDGET.format(
+                    used=count, limit=MAX_TOOL_CALLS, ledger=_ledger(read_paths, searches, misses))}
         if failed_rounds == 2 or (failed_rounds >= STALL_STOP_ROUNDS and failed_rounds % 2 == 0):
             # Przełamanie zastoju: rundy bez nowych danych. Jednorazowa podpowiedź (nie trafia do historii).
             print(tr(f"  [STALL] {failed_rounds} rundy bez nowych danych - podpowiedź z rejestrem",

@@ -342,6 +342,21 @@ NOTE_GLOBAL_DECL = ("\n[Silnik: deklaracja funkcji globalnej '{name}' z pliku gr
                     "możesz go cytować z nazwą pliku):\n```c\n{decl}\n```]")                         # {name} {path} {decl}
 
 
+# ---------------------------------------------------------------- od 2.0.3
+HINT_COMPILE_FULL_CODE = (
+    "[Uwaga systemowa] Użytkownik zgłosił błąd kompilacji swojego skryptu, a Twoja odpowiedź nie zawiera poprawionego kodu. "
+    "Podaj CAŁY poprawiony skrypt w jednym bloku kodu (nie tylko fragment i nie sam opis), z poprawką wskazanej linii. "
+    "Używaj wyłącznie nazw potwierdzonych w wynikach narzędzi.")
+API_ENUM_NOT_SEEN = ("{enum}.{value}: wartości {value} nie ma w wynikach narzędzi (deklaracji {enum} nie odczytano) - "
+                     "sprawdź ją przed użyciem")                                                    # {enum} {value}
+HINT_BUDGET = (                       # {used} {limit} {ledger}
+    "[Uwaga systemowa] Wykorzystano {used} z {limit} wywołań narzędzi w tej turze. {ledger} "
+    "Sprawdzaj już tylko nazwy, których nadal brakuje do odpowiedzi (najpierw odczytaj plik klasy, której dotyczy "
+    "pytanie, jeśli jeszcze go nie czytałeś). Gdy masz dość danych, napisz odpowiedź; czego nie znalazłeś, opisz wprost.")
+NOTE_ENUM_DECL = ("\n[Silnik: deklaracja '{name}' z pliku gry {path} (dosłowny fragment; tylko te wartości istnieją):\n"
+                  "```c\n{decl}\n```]")                                                            # {name} {path} {decl}
+
+
 # ---------------------------------------------------------------- od 2.0.0: wersja angielska
 # Język wybiera reforger_i18n (REFORGER_LANG albo "lang" w settings.json). Dla "en" stałe powyżej są zastępowane
 # stałymi o tych samych nazwach z reforger_prompts_en.py (te same pola {nazwa}; sprawdza to test).

@@ -4,7 +4,7 @@ from __future__ import annotations
 import os
 
 
-VERSION = "2.0.2"
+VERSION = "2.0.3"
 
 # Ścieżki (od 1.9.0 ustawiane także w interfejsie): zmienna środowiskowa > assistant_web_data/settings.json
 # > wartość domyślna poniżej. Zmiana w interfejsie obowiązuje od następnego uruchomienia.

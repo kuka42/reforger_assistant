@@ -337,6 +337,21 @@ NOTE_GLOBAL_DECL = ("\n[Engine: declaration of the global function '{name}' from
                     "you may quote it with the file name):\n```c\n{decl}\n```]")                       # {name} {path} {decl}
 
 
+# ----------------------------------------------------------------
+HINT_COMPILE_FULL_CODE = (
+    "[System note] The user reported a compile error in their script, and your answer contains no corrected code. "
+    "Give the WHOLE corrected script in one code block (not just a fragment and not only a description), with the "
+    "indicated line fixed. Use only names confirmed in the tool results.")
+API_ENUM_NOT_SEEN = ("{enum}.{value}: the value {value} is not in the tool results (the declaration of {enum} was not read) - "
+                     "check it before use")                                                           # {enum} {value}
+HINT_BUDGET = (                       # {used} {limit} {ledger}
+    "[System note] {used} of {limit} tool calls in this turn are used. {ledger} "
+    "Check only the names still missing for the answer (first read the file of the class the question is about, "
+    "if you have not read it yet). When you have enough data, write the answer; describe what you did not find directly.")
+NOTE_ENUM_DECL = ("\n[Engine: declaration of '{name}' from the game file {path} (verbatim excerpt; only these values exist):\n"
+                  "```c\n{decl}\n```]")                                                              # {name} {path} {decl}
+
+
 if __name__ == "__main__":
     # Kontrola tłumaczenia: python reforger_prompts_en.py  (te same nazwy stałych i te same pola {nazwa} co w PL).
     import os

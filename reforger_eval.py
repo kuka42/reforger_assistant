@@ -827,6 +827,12 @@ def cmd_log(path: Path) -> None:
                 len(re.findall(r"\[ROZUMOWANIE\] usunięto|\[REASONING\] removed", body)),
             L("zapętlenie [POWTÓRZENIA]", "loop [REPEATS]"): len(re.findall(r"\[(?:POWTÓRZENIA|REPEATS)\]", body)),
             L("oznaczenia w treści [OZNACZENIA]", "marks in the text [MARKS]"): len(re.findall(r"\[(?:OZNACZENIA|MARKS)\]", body)),
+            # od 2.0.3
+            L("deklaracja enuma z pliku gry [ENUM]", "enum declaration from a game file [ENUM]"):
+                len(re.findall(r"\[ENUM\] \w+: (?:deklaracja z|declaration from)", body)),
+            L("przypomnienie o limicie [LIMIT]", "limit reminder [LIMIT]"): len(re.findall(r"\[LIMIT\]", body)),
+            L("brak kodu po błędzie kompilacji", "no code after a compile error"):
+                len(re.findall(r"brak poprawionego kodu|no corrected code in the answer", body)),
         }
         last = outs[-1] if outs else ("?", "?")
         dur = duration if duration is not None else "?"
