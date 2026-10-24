@@ -4,11 +4,12 @@ from __future__ import annotations
 import os
 
 
-VERSION = "1.9.4"
+VERSION = "2.0.2"
 
 # Ścieżki (od 1.9.0 ustawiane także w interfejsie): zmienna środowiskowa > assistant_web_data/settings.json
 # > wartość domyślna poniżej. Zmiana w interfejsie obowiązuje od następnego uruchomienia.
 from reforger_paths import resolve as _resolve_path, default_docs_path as _default_docs_path
+from reforger_i18n import LANG  # noqa: F401  (od 2.0.0: "pl" / "en"; REFORGER_LANG albo "lang" w settings.json)
 
 DEFAULT_MCP_SCRIPT = r"C:\enfusion-mcp-BK\dist\index.js"
 DEFAULT_GAME_PATH = r"C:\Program Files\Steam\steamapps\common\Arma Reforger"
@@ -85,6 +86,17 @@ if EMERGENCY_IN_HISTORY not in ("placeholder", "keep"):
 
 
 def config_summary() -> str:
+    if LANG == "en":
+        return (f"[CONFIG] version={VERSION} model={MODEL} num_ctx={NUM_CTX} "
+                f"num_predict={OLLAMA_NUM_PREDICT if OLLAMA_NUM_PREDICT > 0 else 'unlimited'} "
+                f"temperature={OLLAMA_TEMPERATURE} think={OLLAMA_THINK or '-'} "
+                f"max_MCP_calls={MAX_TOOL_CALLS} tool_result={MAX_TOOL_RESULT_CHARS} "
+                f"tool_context={MAX_TOOL_CONTEXT_CHARS} evidence_after_turn={FINISHED_EVIDENCE_CHARS} "
+                f"api_limit_class={SOFT_LIMIT_CLASS_SEARCH}/other={SOFT_LIMIT_OTHER_SEARCH} "
+                f"view_limit={VIEW_LIMIT_PER_FILE} verifier={VERIFY_MODE} emergency_in_history={EMERGENCY_IN_HISTORY} "
+                f"reasoning_in_turn={THINKING_KEEP_CHARS if THINKING_KEEP_CHARS >= 0 else 'all'} "
+                f"api_check={API_CHECK_MODE} knowledge_before_code={KB_CHECK_MODE} "
+                f"stream={'on' if OLLAMA_STREAM else 'off'} reasoning_abort={THINK_ABORT_TOKENS or 'off'} language={LANG}")
     return (f"[CONFIG] wersja={VERSION} model={MODEL} num_ctx={NUM_CTX} "
             f"num_predict={OLLAMA_NUM_PREDICT if OLLAMA_NUM_PREDICT > 0 else 'bez limitu'} "
             f"temperature={OLLAMA_TEMPERATURE} think={OLLAMA_THINK or '-'} "
@@ -94,4 +106,4 @@ def config_summary() -> str:
             f"limit_widoków={VIEW_LIMIT_PER_FILE} weryfikator={VERIFY_MODE} awaryjne_w_historii={EMERGENCY_IN_HISTORY} "
             f"rozumowanie_w_turze={THINKING_KEEP_CHARS if THINKING_KEEP_CHARS >= 0 else 'całość'} "
             f"kontrola_api={API_CHECK_MODE} wiedza_przed_kodem={KB_CHECK_MODE} "
-            f"stream={'on' if OLLAMA_STREAM else 'off'} przerwanie_rozumowania={THINK_ABORT_TOKENS or 'off'}")
+            f"stream={'on' if OLLAMA_STREAM else 'off'} przerwanie_rozumowania={THINK_ABORT_TOKENS or 'off'} jezyk={LANG}")

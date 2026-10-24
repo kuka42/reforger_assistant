@@ -65,6 +65,7 @@ W PowerShellu to samo robisz poleceniami `$env:ENFUSION_MCP_SCRIPT = "..."` i `$
   * Lista modeli pochodzi z Ollamy. Modele bez obsługi narzędzi są wyłączone, a modele tylko do osadzeń ukryte.
   * Kontekst: presety 32k, 48k, 64k, 96k, 128k lub własna wartość od 32 768 do 262 144. Minimum wynika z limitów wyników narzędzi, które są dobrane do 32 768 tokenów.
   * Zmiana obowiązuje od następnego pytania i zapisuje się w `assistant_web_data\settings.json`.
+* **Góra, dalej:** przycisk **ścieżki** (BK, gra, dokumentacja; działają od ponownego uruchomienia) i **język** (PL/EN; interfejs od razu, asystent od ponownego uruchomienia, patrz [Język odpowiedzi](#język-odpowiedzi-od-200--answer-language)). Na węższych ekranach przyciski pokazują same wartości.
 * **Prawy panel „Aktywność MCP”:** każde wywołanie narzędzia (nazwa, argumenty, status, czas), tylko do podglądu.
 * **Odpowiedzi:** tabele, listy, linie poziome i bloki kodu z przyciskiem „Kopiuj”.
 
@@ -85,6 +86,16 @@ python .reforger_assistant_WEB.py --model gpt-oss:20b --num-ctx 32768
 
 Pierwszeństwo ustawień modelu i kontekstu: **argument wiersza poleceń > zapisane w interfejsie (`settings.json`) > zmienne środowiskowe i wartości domyślne**.
 
+## Język odpowiedzi (od 2.0.0) / Answer language
+
+Asystent działa po polsku (domyślnie) albo po angielsku. Język obejmuje interfejs w przeglądarce i wszystko po stronie silnika: prompt systemowy, podpowiedzi i komunikaty dla modelu, kontrole odpowiedzi (weryfikator cytatów, kontrola API i składni, oznaczenia `⚠` w treści, stopki), log w konsoli i zestaw testowy.
+
+Język zmieniasz przyciskiem **język** na górnym pasku (od 2.0.1). Interfejs przełącza się od razu, a silnik po ponownym uruchomieniu asystenta (teksty dla modelu są ustawiane przy starcie); do tego czasu menu pokazuje, w jakim języku asystent nadal odpowiada. Wybór zapisuje się jako `"lang"` w `assistant_web_data\settings.json`.
+
+Zmienna środowiskowa `REFORGER_LANG=en` (albo `pl`) ma pierwszeństwo: ustawiona w launcherze (`set "REFORGER_LANG=en"`) albo w PowerShellu (`$env:REFORGER_LANG = "en"`) blokuje przycisk w interfejsie. Kontrole rozumieją oba języki, więc stara rozmowa po polsku nie psuje się po przełączeniu. Język silnika widać w linii `[CONFIG]` (`jezyk=` / `language=`).
+
+*The assistant works in Polish (default) or English: the browser UI, system prompt, model hints, all answer checks, the console log and the test set. Use the **language** button in the top bar: the UI switches immediately, the engine after a restart. `REFORGER_LANG=en` in the launcher overrides the button.*
+
 ## Konfiguracja (zmienne środowiskowe)
 
 Ustawiasz je w launcherze (`set "NAZWA=wartość"`) albo w PowerShellu (`$env:NAZWA = "wartość"`). Przy starcie silnik wypisuje w konsoli linię `[CONFIG]` z aktualnymi wartościami.
@@ -97,6 +108,7 @@ Od 1.9.0 ścieżki do BK, gry i dokumentacji ustawisz w interfejsie: przycisk **
 |-|-|-|
 |`ENFUSION_MCP_SCRIPT`|ścieżka autora|Plik `dist/index.js` serwera Enfusion MCP BK|
 |`ENFUSION_GAME_PATH`|ścieżka autora|Folder zainstalowanej gry|
+|`REFORGER_LANG`|`pl`|Język silnika: `pl` albo `en` (patrz [Język odpowiedzi](#język-odpowiedzi-od-200--answer-language))|
 |`REFORGER_DOCS_PATH`|obok gry: `Arma Reforger Tools\Workbench\docs`|Folder `docs` dokumentacji API z Arma Reforger Tools (hierarchia klas). Zwykle nie trzeba ustawiać: asystent szuka go w tym samym `steamapps\common` co gra|
 |`OLLAMA_CHAT_URL`|`http:/127.0.0.1:11434/api/chat`|Adres Ollamy|
 |`OLLAMA_MODEL`|`gpt-oss:20b`|Model domyślny (nadpisywany przez `settings.json` i `--model`)|
@@ -211,22 +223,19 @@ Weryfikator **nie** sprawdza wszystkiego: nie oceni np. opisu działania kodu w 
 
 ```powershell
 python reforger_eval.py questions                       # lista 10 pytań
-python reforger_eval.py score                           # ocena assistant_web_data
-
-conversations.json
+python reforger_eval.py score                           # ocena assistant_web_data\conversations.json
 python reforger_eval.py score ścieżka\do\pliku.json --md wyniki.md
 python reforger_eval.py log log.txt                     # podsumowanie logu serwera tura po turze
 ```
 
-Pytania i reguły są po polsku i dobrane pod `gpt-oss:20b`. Ocena regułowa jest przybliżeniem: nie zastępuje przeczytania odpowiedzi.
+Pytania i reguły są dobrane pod `gpt-oss:20b`. Od 2.0.0 każde pytanie ma wersję angielską: przy `REFORGER_LANG=en` polecenie `questions` wypisuje pytania po angielsku, a raport `score` i `log` jest po angielsku. Klucz odpowiedzi rozumie oba języki i rozpoznaje rozmowy z pytaniami polskimi i angielskimi. Ocena regułowa jest przybliżeniem: nie zastępuje przeczytania odpowiedzi.
 
 ## Ograniczenia
 
 * Modele bywają w błędzie. Z naszych testów najczęstsze to wymyślone wartości (np. nieistniejące poziomy `LogLevel`), pomylenie lufy (`muzzle`) z magazynkiem, pomyłki w tym, co jest publiczne, a co prywatne, oraz kod prefabów z wymyślonymi nazwami kluczy lub identyfikatorami GUID.
 * Asystent był dostrajany i testowany na `gpt-oss:20b`. Inne modele mogą działać inaczej.
 * Czasem model wpada w bardzo długie rozumowanie (nawet kilkanaście tysięcy tokenów, czyli kilka minut - na razie Nie ma przycisku „Stop”.)
-* Odpowiedzi są po polsku.
-* Ścieżki do MCP i do gry ustawia się zmiennymi środowiskowymi (wybór w interfejsie jest w planach).
+* Wersja angielska jest nowa (od 2.0.0) i mniej przetestowana niż polska.
 
 ## Rozwiązywanie problemów
 
@@ -256,6 +265,8 @@ Pytania i reguły są po polsku i dobrane pod `gpt-oss:20b`. Ocena regułowa jes
 |`assistant_web_data`|Tworzony automatycznie: `conversations.json` i `settings.json`|
 |`reforger_config.py`|Konfiguracja: wersja, ścieżki, limity, tryby|
 |`reforger_prompts.py`|Teksty dla modelu: prompt systemowy, podpowiedzi, stopki|
+|`reforger_prompts_en.py`|Te same teksty po angielsku (od 2.0.0); `python reforger_prompts_en.py` sprawdza zgodność nazw i pól z wersją polską|
+|`reforger_i18n.py`|Wybór języka (`REFORGER_LANG` / `settings.json`) i funkcja `tr()` dla krótkich komunikatów (od 2.0.0)|
 |`reforger_rules.py`|Reguły jako dane: narzędzia, wzorce, listy nazw|
 |`reforger_checks.py`|Kontrole odpowiedzi: weryfikator cytatów, kontrola API|
 |`reforger_mcp.py`|Klient Enfusion MCP|

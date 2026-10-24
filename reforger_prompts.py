@@ -340,3 +340,13 @@ MARK_UNREAD_BLOCK = ("> ⚠ **Uwaga silnika:** pliku `{path}` asystent w tej roz
 MARK_API_BLOCK = "> ⚠ **Uwaga silnika:** {problem}\n\n"                                            # {problem}
 NOTE_GLOBAL_DECL = ("\n[Silnik: deklaracja funkcji globalnej '{name}' z pliku gry {path} (dosłowny fragment, "
                     "możesz go cytować z nazwą pliku):\n```c\n{decl}\n```]")                         # {name} {path} {decl}
+
+
+# ---------------------------------------------------------------- od 2.0.0: wersja angielska
+# Język wybiera reforger_i18n (REFORGER_LANG albo "lang" w settings.json). Dla "en" stałe powyżej są zastępowane
+# stałymi o tych samych nazwach z reforger_prompts_en.py (te same pola {nazwa}; sprawdza to test).
+from reforger_i18n import EN as _EN  # noqa: E402
+
+if _EN:
+    import reforger_prompts_en as _en  # noqa: E402
+    globals().update({k: v for k, v in vars(_en).items() if k.isupper()})

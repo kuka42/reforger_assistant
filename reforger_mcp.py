@@ -12,6 +12,7 @@ from collections import deque
 from pathlib import Path
 
 from reforger_config import VERSION, MCP_SCRIPT, GAME_PATH, MCP_TIMEOUT
+from reforger_i18n import tr
 from reforger_prompts import TOOL_READ_ONLY_NOTE
 from reforger_rules import READ_ONLY_TOOLS, TOOL_ACTION_LIMITS, TOOL_DROP_ARGS
 
@@ -38,7 +39,7 @@ class MCPStdioClient:
 
     def __enter__(self) -> "MCPStdioClient":
         if not Path(self.script).is_file():
-            raise MCPError(f"Nie znaleziono serwera MCP: {self.script}")
+            raise MCPError(tr(f"Nie znaleziono serwera MCP: {self.script}", f"MCP server not found: {self.script}"))
         env = os.environ.copy()
         env.update({
             "ENFUSION_GAME_PATH": GAME_PATH,
@@ -50,7 +51,7 @@ class MCPStdioClient:
                 encoding="utf-8", errors="replace", text=True, bufsize=1,
             )
         except OSError as exc:
-            raise MCPError(f"Nie można uruchomić Node/Enfusion MCP: {exc}") from exc
+            raise MCPError(tr(f"Nie można uruchomić Node/Enfusion MCP: {exc}", f"Cannot start Node/Enfusion MCP: {exc}")) from exc
 
         threading.Thread(target=self._stdout_reader, daemon=True).start()
         threading.Thread(target=self._stderr_reader, daemon=True).start()
@@ -61,7 +62,7 @@ class MCPStdioClient:
                 "clientInfo": {"name": "reforger-python-assistant", "version": VERSION},
             })
             if not isinstance(hello, dict) or "protocolVersion" not in hello:
-                raise MCPError("Serwer nie zwrócił wersji protokołu podczas initialize")
+                raise MCPError(tr("Serwer nie zwrócił wersji protokołu podczas initialize", "The server returned no protocol version during initialize"))
             self._send({"jsonrpc": "2.0", "method": "notifications/initialized"})
             cursor = None
             while True:
@@ -74,7 +75,7 @@ class MCPStdioClient:
                 if not cursor:
                     break
             if not self.tools:
-                raise MCPError("BK połączył się, ale nie udostępnia żadnego narzędzia odczytu")
+                raise MCPError(tr("BK połączył się, ale nie udostępnia żadnego narzędzia odczytu", "BK connected, but it offers no read tool"))
             return self
         except BaseException:
             self.close()
@@ -101,12 +102,12 @@ class MCPStdioClient:
 
     def _send(self, message: dict) -> None:
         if not self.process or not self.process.stdin:
-            raise MCPError("Proces MCP nie został uruchomiony")
+            raise MCPError(tr("Proces MCP nie został uruchomiony", "The MCP process was not started"))
         try:
             self.process.stdin.write(json.dumps(message, ensure_ascii=False) + "\n")
             self.process.stdin.flush()
         except (OSError, BrokenPipeError) as exc:
-            raise MCPError(f"Nie można wysłać wiadomości do MCP: {exc}") from exc
+            raise MCPError(tr(f"Nie można wysłać wiadomości do MCP: {exc}", f"Cannot send a message to MCP: {exc}")) from exc
 
     def request(self, method: str, params: dict | None = None) -> dict:
         self.next_id += 1
@@ -122,9 +123,9 @@ class MCPStdioClient:
                 msg = self.responses.get(timeout=remaining)
             except queue.Empty as exc:
                 details = "; ".join(list(self.logs)[-3:])
-                raise MCPError(f"MCP nie odpowiedział ({method}); {details}") from exc
+                raise MCPError(tr(f"MCP nie odpowiedział ({method}); {details}", f"MCP did not respond ({method}); {details}")) from exc
             if msg is None:
-                raise MCPError("Proces MCP zakończył połączenie; " + "; ".join(list(self.logs)[-3:]))
+                raise MCPError(tr("Proces MCP zakończył połączenie; ", "The MCP process closed the connection; ") + "; ".join(list(self.logs)[-3:]))
             if "method" in msg and "id" in msg:
                 # Nie udostępniamy operacji od MCP do użytkownika; ping obsługujemy.
                 if msg["method"] == "ping":
@@ -136,27 +137,28 @@ class MCPStdioClient:
             if msg.get("id") != request_id:
                 # Notyfikacje nie mają id; obecny klient wysyła tylko jeden request naraz.
                 if "id" in msg:
-                    self.logs.append(f"Pominięto nieoczekiwaną odpowiedź MCP id={msg['id']}")
+                    self.logs.append(tr(f"Pominięto nieoczekiwaną odpowiedź MCP id={msg['id']}", f"Skipped an unexpected MCP response id={msg['id']}"))
                 continue
             if "error" in msg:
                 raise MCPError(f"MCP {method}: {msg['error']}")
             result = msg.get("result")
             if not isinstance(result, dict):
-                raise MCPError(f"MCP {method} zwrócił nieoczekiwany format")
+                raise MCPError(tr(f"MCP {method} zwrócił nieoczekiwany format", f"MCP {method} returned an unexpected format"))
             return result
 
     def call_tool(self, name: str, arguments: dict) -> dict:
         if name not in self.tools:
-            raise MCPError(f"Narzędzie {name!r} jest niedostępne lub niewłączone")
+            raise MCPError(tr(f"Narzędzie {name!r} jest niedostępne lub niewłączone", f"Tool {name!r} is unavailable or not enabled"))
         if not isinstance(arguments, dict):
-            raise MCPError("Argumenty narzędzia muszą być obiektem JSON")
+            raise MCPError(tr("Argumenty narzędzia muszą być obiektem JSON", "Tool arguments must be a JSON object"))
         schema = self.tools[name].get("inputSchema", {})
         properties = schema.get("properties", {})
         required = schema.get("required", [])
         unknown = sorted(set(arguments) - set(properties))
         missing = sorted(set(required) - set(arguments))
         if unknown or missing:
-            raise MCPError(f"Niepoprawne argumenty {name}: nieznane={unknown}, brak={missing}")
+            raise MCPError(tr(f"Niepoprawne argumenty {name}: nieznane={unknown}, brak={missing}",
+                                  f"Invalid arguments {name}: unknown={unknown}, missing={missing}"))
         return self.request("tools/call", {"name": name, "arguments": arguments})
 
     def close(self) -> None:
@@ -207,14 +209,14 @@ def tool_schema_hint(mcp_tools: dict[str, dict], name: str) -> str:
             required = set(schema.get("required", []))
             args = ", ".join((p + "*" if p in required else p) for p in props)
             signatures.append(f"{candidate}({args})")
-        return "Dostępne narzędzia MCP (* = wymagane): " + "; ".join(signatures)[:1800]
+        return tr("Dostępne narzędzia MCP (* = wymagane): ", "Available MCP tools (* = required): ") + "; ".join(signatures)[:1800]
     schema = mcp_tools[name].get("inputSchema", {})
     hint = {
         "narzedzie": name,
         "wymagane": schema.get("required", []),
         "parametry": schema.get("properties", {}),
     }
-    return "Schemat parametrów z MCP: " + json.dumps(hint, ensure_ascii=False)[:3000]
+    return tr("Schemat parametrów z MCP: ", "Parameter schema from MCP: ") + json.dumps(hint, ensure_ascii=False)[:3000]
 
 
 def _raw_text(result: dict) -> str:
@@ -224,7 +226,7 @@ def _raw_text(result: dict) -> str:
         if item.get("type") == "text":
             chunks.append(str(item.get("text", "")))
         else:
-            chunks.append("[Pominięto wynik nie-tekstowy narzędzia]")
+            chunks.append(tr("[Pominięto wynik nie-tekstowy narzędzia]", "[Non-text tool result skipped]"))
     # Nie dubluj tego samego kodu, gdy BK zwraca jednoczesnie content
     # i structuredContent. Dublowanie zuzywalo kontekst bez nowych faktow.
     if not chunks and "structuredContent" in result:

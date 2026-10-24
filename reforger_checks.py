@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 
+from reforger_i18n import tr
 from reforger_prompts import FOOTER_VERIFY, FOOTER_VERIFY_MORE, FOOTER_API
 from reforger_prompts import API_GAME_INSTANCE, API_CHAIN_NOT_SEEN, API_DECL_NO_CLASS, API_DECL_NO_OVERRIDE, API_DECL_NO_IMPLICIT
 from reforger_prompts import QUOTE_LINES_NOT_SEEN
@@ -14,7 +15,7 @@ from reforger_prompts import (API_SCR_TAG_CLASS, API_SCR_TAG_TEXT, API_RETURN_TY
 from reforger_rules import (REASONING_LEAK_START_RE, REASONING_LEAK_MARKERS_RE, REPEAT_LINE_MAX, SCR_TAG_TEXT_RE,
                             SCR_EXAMPLE_NAME_RE,
                             VALUE_TYPES, VALUE_TYPE_COMPAT)
-from reforger_rules import LINE_REF_RE, VERIFY_NO_FIX_MARKERS
+from reforger_rules import LINE_REF_RE, LINE_COLUMN_RE, VERIFY_NO_FIX_MARKERS, REASONING_LEAK_MIN_MARKERS
 from reforger_rules import _COMPILE_LINE_RES, KB_SECTION_RE, SYNTAX_RULES
 from reforger_rules import KB_CHECK_CAP, KB_CHECK_DROP_WORDS, KB_CHECK_PRIORITY_RE
 from reforger_rules import (
@@ -161,7 +162,8 @@ def _verify_answer(answer: str, files: dict[str, str], marks: list | None = None
         first_lines = "\n".join(lines[:3])
         attributed = bool(path) and not (_OWN_CODE_RE.search(window) or own_example)
         if (not path and not _OWN_CODE_RE.search(window) and not own_example and _GAME_LABEL_RE.search(gap[-220:])):
-            findings.append("blok oznaczony jako 'z kodu gry' nie wskazuje pliku - cytat niepotwierdzony")
+            findings.append(tr("blok oznaczony jako 'z kodu gry' nie wskazuje pliku - cytat niepotwierdzony",
+                               "block labelled 'from game code' does not name a file - unconfirmed quote"))
         if not attributed or _EXAMPLE_PATH_RE.search(path or ""):
             # Nowy kod nie powinien używać identyfikatorów istniejących wpisów (kolizja/nadpisanie wpisu).
             for cls, guid in dict.fromkeys(_ENTRY_GUID_RE.findall(block)):
@@ -172,9 +174,12 @@ def _verify_answer(answer: str, files: dict[str, str], marks: list | None = None
                 if found and found.group(1) != cls:
                     # Ten sam GUID dla INNEJ klasy = kolizja identyfikatorów. Ta sama klasa to cytat albo
                     # prawidłowe nadpisanie wpisu w override prefabu (np. ActionsManagerComponent).
-                    msg = (f"GUID {{{guid}}} jest w '{_display_name(owner, files[owner])}' przypisany do wpisu "
-                           f"{found.group(1)}, a tutaj użyty dla {cls}: kolizja identyfikatorów "
-                           "(nowy wpis powinien mieć własny GUID)")
+                    msg = tr(f"GUID {{{guid}}} jest w '{_display_name(owner, files[owner])}' przypisany do wpisu "
+                             f"{found.group(1)}, a tutaj użyty dla {cls}: kolizja identyfikatorów "
+                             "(nowy wpis powinien mieć własny GUID)",
+                             f"GUID {{{guid}}} in '{_display_name(owner, files[owner])}' belongs to the entry "
+                             f"{found.group(1)}, but here it is used for {cls}: identifier collision "
+                             "(a new entry should have its own GUID)")
                     if msg not in findings:
                         findings.append(msg)
         if (not path or _OWN_CODE_RE.search(window) or own_example
@@ -192,7 +197,8 @@ def _verify_answer(answer: str, files: dict[str, str], marks: list | None = None
                                    for c in new_classes for t in files.values()))
             if not (re.search(r"\bmodded\s+class\b", block) or own_new       # od 1.8.6: nowa klasa = plik modu
                     or re.search(r"\bclass\s+(?!SCR_)[A-Z][A-Z0-9]{1,5}_\w+", block)):
-                findings.append(f"plik '{path}' nie został odczytany w tej rozmowie - cytat niepotwierdzony")
+                findings.append(tr(f"plik '{path}' nie został odczytany w tej rozmowie - cytat niepotwierdzony",
+                                   f"file '{path}' was not read in this conversation - unconfirmed quote"))
                 if marks is not None:
                     marks.append((match.start(), path, "unread"))
             continue
@@ -224,11 +230,13 @@ def _verify_answer(answer: str, files: dict[str, str], marks: list | None = None
                 discontinuous = True
         if bad_lines:
             sample = "; ".join(f"`{ln[:80]}`" for ln in bad_lines[:2])
-            findings.append(f"w bloku przypisanym do '{path}' nie znaleziono w pliku linii: {sample}")
+            findings.append(tr(f"w bloku przypisanym do '{path}' nie znaleziono w pliku linii: {sample}",
+                               f"in the block attributed to '{path}' these lines were not found in the file: {sample}"))
             if marks is not None:
                 marks.append((match.start(), path, "mismatch"))
         elif discontinuous:
-            findings.append(f"blok przypisany do '{path}' łączy linie, które w pliku nie sąsiadują ze sobą")
+            findings.append(tr(f"blok przypisany do '{path}' łączy linie, które w pliku nie sąsiadują ze sobą",
+                               f"the block attributed to '{path}' joins lines that are not adjacent in the file"))
         else:
             ok += 1
         # klasa o tej samej nazwie w odczytanych plikach, ale z inną klasą bazową
@@ -237,33 +245,39 @@ def _verify_answer(answer: str, files: dict[str, str], marks: list | None = None
         for text in files.values():
             found = re.search(rf"\bclass\s+{re.escape(cname)}\s*:\s*(\w+)", text)
             if found and found.group(1) != parent:
-                msg = (f"klasa '{cname}' dziedziczy w odczytanym pliku po '{found.group(1)}', "
-                       f"a w odpowiedzi po '{parent}'")
+                msg = _inherit_msg(cname, found.group(1), parent)
                 if msg not in findings:
                     findings.append(msg)
                 break
-    # Teza w prozie: "X dziedziczy po Y" vs deklaracja klasy w odczytanych plikach.
-    for pm in re.finditer(r"[`*]*(\w+)[`*]*\s+dziedziczy\s+po\s+[`*]*(\w+)", answer):
+    # Teza w prozie: "X dziedziczy po Y" vs deklaracja klasy w odczytanych plikach (od 2.0.0 także "X inherits from Y").
+    for pm in re.finditer(r"[`*]*(\w+)[`*]*\s+(?:dziedziczy\s+po|inherits\s+from|extends|derives\s+from)\s+[`*]*(\w+)",
+                          answer):
         cname, parent = pm.groups()
         for text in files.values():
             found = re.search(rf"\bclass\s+{re.escape(cname)}\s*:\s*(\w+)", text)
             if found:
                 if found.group(1) != parent:
-                    msg = (f"klasa '{cname}' dziedziczy w odczytanym pliku po '{found.group(1)}', "
-                           f"a w odpowiedzi po '{parent}'")
+                    msg = _inherit_msg(cname, found.group(1), parent)
                     if msg not in findings:
                         findings.append(msg)
                 break
     return findings, checked, ok
 
 
+def _inherit_msg(cname: str, real: str, parent: str) -> str:
+    return tr(f"klasa '{cname}' dziedziczy w odczytanym pliku po '{real}', a w odpowiedzi po '{parent}'",
+              f"class '{cname}' inherits from '{real}' in the file that was read, but from '{parent}' in the answer")
+
+
 def _log_verification(findings: list[str], checked: int, ok: int) -> None:
     if findings:
-        print(f"  [VERIFY] UWAGI ({len(findings)}); bloków sprawdzonych: {checked}, zgodnych: {ok}", flush=True)
+        print(tr(f"  [VERIFY] UWAGI ({len(findings)}); bloków sprawdzonych: {checked}, zgodnych: {ok}",
+                 f"  [VERIFY] ISSUES ({len(findings)}); blocks checked: {checked}, matching: {ok}"), flush=True)
         for item in findings:
             print(f"  [VERIFY]   - {item}", flush=True)
     else:
-        print(f"  [VERIFY] OK; bloków sprawdzonych: {checked}, zgodnych: {ok}", flush=True)
+        print(tr(f"  [VERIFY] OK; bloków sprawdzonych: {checked}, zgodnych: {ok}",
+                 f"  [VERIFY] OK; blocks checked: {checked}, matching: {ok}"), flush=True)
 
 
 def _verification_footer(findings: list[str]) -> str:
@@ -475,7 +489,8 @@ def _enum_problems(answer: str, texts: list[str]) -> list[str]:
             values = _enum_values(texts, enum)
             if values and value not in values:
                 shown = ", ".join(sorted(values)[:10])
-                problems.append(f"{enum}.{value}: wartości {value} nie ma w enumie {enum} (są: {shown})")
+                problems.append(tr(f"{enum}.{value}: wartości {value} nie ma w enumie {enum} (są: {shown})",
+                                   f"{enum}.{value}: the value {value} is not in the enum {enum} (values: {shown})"))
     return problems
 
 
@@ -496,7 +511,8 @@ def _api_problems(answer: str, meta: dict, files: dict[str, str]) -> list[str]:
     for cls, meth, kind in _api_calls(answer):
         shown = (f"GetGame().{meth}" if kind == "game" else f"{cls}.{meth}" if cls else f"{meth}")
         if (cls and f"{cls}.{meth}" in banned) or meth in banned:
-            problems.append(f"{shown}: kompilator zgłosił, że {cls + '.' if cls else ''}{meth} nie istnieje")
+            problems.append(tr(f"{shown}: kompilator zgłosił, że {cls + '.' if cls else ''}{meth} nie istnieje",
+                               f"{shown}: the compiler reported that {cls + '.' if cls else ''}{meth} does not exist"))
             continue
         if kind == "game":
             if not any(_find_class_method(texts, c, meth)[0] for c in game_classes):
@@ -513,13 +529,15 @@ def _api_problems(answer: str, meta: dict, files: dict[str, str]) -> list[str]:
             if not found:
                 chain = chains.get(cls)
                 problems.append(API_CHAIN_NOT_SEEN.format(shown=shown, cls=cls, chain=" : ".join(chain))
-                                if chain else f"{shown}: brak w wynikach narzędzi dla klasy {cls}")
+                                if chain else tr(f"{shown}: brak w wynikach narzędzi dla klasy {cls}",
+                                                 f"{shown}: not in the tool results for class {cls}"))
             elif is_static is False:
                 problems.append(API_GAME_INSTANCE.format(cls=cls, meth=meth) if cls in game_classes
-                                else f"{shown}: metoda instancji wywołana statycznie (wywołaj ją na obiekcie)")
+                                else tr(f"{shown}: metoda instancji wywołana statycznie (wywołaj ją na obiekcie)",
+                                        f"{shown}: instance method called statically (call it on an object)"))
             continue
         if not any(re.search(rf"\b{re.escape(meth)}\s*\(", t) for t in texts):
-            problems.append(f"{shown}(): brak w wynikach narzędzi")
+            problems.append(tr(f"{shown}(): brak w wynikach narzędzi", f"{shown}(): not in the tool results"))
     problems = _decl_problems(answer, meta, files) + problems      # od 1.8.3: klasy bazowe i override najpierw
     problems += _enum_problems(answer, texts)                     # od 1.8.5: wymyślone wartości enumów
     problems += _return_type_problems(answer, texts)              # od 1.8.7: typ zwracany vs typ zmiennej
@@ -582,6 +600,10 @@ def _return_type_problems(answer: str, texts: list[str]) -> list[str]:
     return problems
 
 
+# Od 2.0.2: silnik podstawia tu DOCS.knows (hierarchia klas z dokumentacji Workbencha), żeby rozpoznać klasy gry.
+GAME_CLASS_LOOKUP = None
+
+
 def _scr_tag_problems(answer: str, texts: list[str], files: dict[str, str]) -> list[str]:
     """Nowa klasa moda z prefiksem SCR_ (prefiks gry) albo zalecenie SCR_ jako tagu moda w tekście."""
     problems = []
@@ -590,11 +612,16 @@ def _scr_tag_problems(answer: str, texts: list[str], files: dict[str, str]) -> l
             continue
         if _class_known(texts, cls) or any(re.search(rf"\bclass\s+{re.escape(cls)}\b", t) for t in files.values()):
             continue            # klasa gry (cytat albo modded): to nie jest nowa klasa moda
+        # Od 2.0.2: klasa gry znana z dokumentacji API albo z wyników narzędzi jako właściciel metod ("SCR_X.Metoda(")
+        # - test G (EN): SCR_CharacterControllerComponent opisany przez silnik jako "nowa klasa moda".
+        if (GAME_CLASS_LOOKUP and GAME_CLASS_LOOKUP(cls)) or any(
+                re.search(rf"\b{re.escape(cls)}\.\w+\s*\(", t) for t in texts):
+            continue
         problems.append(API_SCR_TAG_CLASS.format(cls=cls, rest=cls[4:]))
     prose = _API_CODE_BLOCK_RE.sub("", answer)
     if (re.search(SCR_TAG_TEXT_RE, prose, re.I)
             # od 1.9.3: tabela "Tag (prefiks) | ... | `SCR_`" i przykładowe nazwy moda w tekście (`SCR_MyComponent.c`)
-            or re.search(r"^\|[^\n]*(?:tag|prefiks)[^\n]*\|\s*[*`]*SCR_[*`]*\s*\|", prose, re.I | re.M)
+            or re.search(r"^\|[^\n]*(?:tag|prefiks|prefix)[^\n]*\|\s*[*`]*SCR_[*`]*\s*\|", prose, re.I | re.M)
             or re.search(SCR_EXAMPLE_NAME_RE, prose)):
         problems.append(API_SCR_TAG_TEXT)
     return problems
@@ -815,6 +842,7 @@ def _seen_for(context: str, meta: dict) -> set[int] | None:
     return None
 
 
+TABLE_LABEL = tr("tabela: ", "table: ")
 _RANGE_RE = re.compile(r"(\d{1,5})(?:\s*[-‑–]\s*(\d{1,5}))?")
 
 
@@ -834,11 +862,11 @@ def _line_refs(answer: str) -> list[tuple[str, int, int | None]]:
             col = None
             continue
         if col is None:
-            col = next((i for i, c in enumerate(cells) if re.match(r"(?i)[*`]*lini", c)), None)
+            col = next((i for i, c in enumerate(cells) if re.match(LINE_COLUMN_RE, c)), None)
             continue
         if col < len(cells) and not re.fullmatch(r"[-:\s]*", cells[col]):
             for m in _RANGE_RE.finditer(cells[col]):
-                refs.append((f"tabela: {cells[col]}", int(m.group(1)), int(m.group(2)) if m.group(2) else None, line))
+                refs.append((TABLE_LABEL + cells[col], int(m.group(1)), int(m.group(2)) if m.group(2) else None, line))
     return refs
 
 
@@ -885,7 +913,7 @@ def _strip_leaked_reasoning(text: str) -> tuple[str, int]:
         head = text[:m.start()]
         if len(head) < 80:
             continue
-        if len(re.findall(REASONING_LEAK_MARKERS_RE, head)) < 2:
+        if len(re.findall(REASONING_LEAK_MARKERS_RE, head)) < REASONING_LEAK_MIN_MARKERS:
             continue
         rest = text[m.start():].lstrip()
         if len(rest) < 80:
@@ -950,7 +978,7 @@ def _annotate_answer(answer: str, files: dict[str, str], meta: dict, syntax: lis
         answer = answer[:line_start] + mark + answer[line_start:]
     # numery linii: po wstawieniach (nie przesuwają się, bo szukamy tekstu, nie pozycji)
     bad = [ref for ref in _line_refs(answer) if _ref_unconfirmed(ref, meta)]
-    labels = list(dict.fromkeys(ref[0].replace("tabela: ", "", 1) for ref in bad))
+    labels = list(dict.fromkeys(ref[0].replace(TABLE_LABEL, "", 1) for ref in bad))
     for label in labels:
         if not label:
             continue

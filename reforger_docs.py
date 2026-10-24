@@ -16,6 +16,8 @@ import os
 import re
 from pathlib import Path
 
+from reforger_i18n import tr
+
 DOC_SETS = ("ArmaReforgerScriptAPIPublic", "EnfusionScriptAPI")
 
 _ROW_RE = re.compile(r'<tr[^>]*\bid="(row_[0-9_]+)"[^>]*>(.*?)</tr>', re.S)
@@ -87,7 +89,7 @@ class DocHierarchy:
             for cls, kids in children.items():
                 merged = self.children.setdefault(cls, [])
                 merged.extend(k for k in kids if k not in merged)
-            self.sources.append(f"{name}: {len(children)} klas")
+            self.sources.append(f"{name}: {len(children)} " + tr("klas", "classes"))
         return self
 
     def __bool__(self) -> bool:

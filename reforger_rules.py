@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import re
 
+from reforger_i18n import EN, tr
+
 
 # Ściśle tylko narzędzia do odczytu. Nie wystawiamy project, mod, wb_* itd.
 READ_ONLY_TOOLS = (
@@ -37,22 +39,28 @@ _CODE_BLOCK_RE = re.compile(r"```[ \t]*([\w+\-]*)[ \t]*\n(.*?)```", re.S)
 _PATH_RE = re.compile(r"((?:scripts|prefabs|configs|ui)/[\w./\-{}]+\.(?:c|et|conf|layout|proto))", re.I)
 
 
-_OWN_CODE_RE = re.compile(r"szkic|nowy plik|nowa klasa|WYMY[ŚS]L", re.I)
+# Od 2.0.0 wzorce rozumieją oba języki (odpowiedzi po polsku i po angielsku).
+_OWN_CODE_RE = re.compile(r"szkic|nowy plik|nowa klasa|WYMY[ŚS]L|\bsketch|\bdraft\b|new file|new class|INVENTED", re.I)
 
 
 # Tuż przed blokiem: "Przykład użycia" / "Jak użyć" = kod własny modelu, chyba że ten sam fragment
 # podpisuje go jako cytat z gry ("fragment z gry", "Plik: ...", ścieżka).
-_EXAMPLE_RE = re.compile(r"przykład|przyklad|jak użyć|jak uzyc|użycie|uzycie|w własnym|w swoim|własnym skrypcie", re.I)
+_EXAMPLE_RE = re.compile(r"przykład|przyklad|jak użyć|jak uzyc|użycie|uzycie|w własnym|w swoim|własnym skrypcie"
+                         r"|\bexample|how to use|\busage\b|in your own|your own script", re.I)
 
 
-_GAME_QUOTE_RE = re.compile(r"fragment\w*\s+z\s+(?:gry|kodu|pliku)|z kodu gry|z pliku|plik\s*:|źródł|kod\s+pochodzi", re.I)
+_GAME_QUOTE_RE = re.compile(r"fragment\w*\s+z\s+(?:gry|kodu|pliku)|z kodu gry|z pliku|plik\s*:|źródł|kod\s+pochodzi"
+                            r"|(?:excerpt|fragment|snippet)\w*\s+from\s+(?:the\s+)?(?:game|code|file)|from (?:the )?game code"
+                            r"|from (?:the )?file|\bfile\s*:|\bsource\b|code\s+comes\s+from", re.I)
 
 
 # Separator pominięcia: sama linia "..." albo komentarz zaczynający się od "..." (np. "// ... (reszta Init)")
 _EXAMPLE_PATH_RE = re.compile(r"example|yourscript|your_script|mymod|myscript|twojmod|twoj_mod|sample|placeholder", re.I)
 
 
-_GAME_LABEL_RE = re.compile(r"z\s+kodu\s+gry|fragment\w*\s+z\s+gry|kod\s+z\s+gry", re.I)
+_GAME_LABEL_RE = re.compile(r"z\s+kodu\s+gry|fragment\w*\s+z\s+gry|kod\s+z\s+gry"
+                            r"|from\s+(?:the\s+)?game\s+code|(?:excerpt|fragment|snippet)\w*\s+from\s+(?:the\s+)?game"
+                            r"|code\s+from\s+(?:the\s+)?game", re.I)
 
 
 _ENTRY_GUID_RE = re.compile(r'([A-Za-z_]\w*)\s+"\{([0-9A-Fa-f]{16})\}"\s*[:{]')     # (klasa wpisu, GUID wpisu) w prefabie
@@ -125,14 +133,19 @@ KB_SECTION_RE = re.compile(r"ternary|pitfall|primitive|switch|operator", re.I)
 # Każda reguła ma źródło: baza wiedzy BK (enforceScript-language.md) albo potwierdzenie przez kompilator.
 SYNTAX_RULES = (
     (re.compile(r"(?<![\w.])\d+(?:\.\d*)?[fF]\b|(?<![\w.])\.\d+[fF]\b"),
-     "sufiks f przy liczbie (np. 0.5f) - Enforce Script go nie przyjmuje (kompilator: Broken expression); pisz 0.5"),
+     tr("sufiks f przy liczbie (np. 0.5f) - Enforce Script go nie przyjmuje (kompilator: Broken expression); pisz 0.5",
+        "f suffix on a number (e.g. 0.5f) - Enforce Script does not accept it (compiler: Broken expression); write 0.5")),
     (re.compile(r"\?"),
-     "operator ?: lub ?. nie istnieje w Enforce Script - użyj if/else (baza wiedzy BK: enforceScript-language.md)"),
+     tr("operator ?: lub ?. nie istnieje w Enforce Script - użyj if/else (baza wiedzy BK: enforceScript-language.md)",
+        "the ?: or ?. operator does not exist in Enforce Script - use if/else (BK knowledge base: enforceScript-language.md)")),
     (re.compile(r"(?<!new )\b[A-Za-z_]\w*\s*<\s*[A-Z]\w*\s*>\s*\("),
-     "wywołanie z parametrem typu (np. GetComponent<T>()) nie istnieje w Enforce Script - komponent pobierasz przez "
-     "Typ.Cast(owner.FindComponent(Typ))"),                                                       # od 1.8.6
+     tr("wywołanie z parametrem typu (np. GetComponent<T>()) nie istnieje w Enforce Script - komponent pobierasz przez "
+        "Typ.Cast(owner.FindComponent(Typ))",
+        "a call with a type parameter (e.g. GetComponent<T>()) does not exist in Enforce Script - get a component with "
+        "Type.Cast(owner.FindComponent(Type))")),                                                  # od 1.8.6
     (re.compile(r'(?<![\w."])\d+(?:\.\d+)?\s*\+\s*""'),
-     'liczba + tekst (3 + "tekst") to błąd parsowania - tekst musi być po lewej ("tekst" + 3)'),
+     tr('liczba + tekst (3 + "tekst") to błąd parsowania - tekst musi być po lewej ("tekst" + 3)',
+        'number + text (3 + "text") is a parse error - the text must be on the left ("text" + 3)')),
 )
 
 
@@ -159,9 +172,12 @@ EMERGENCY_CODE_CAP = 12000               # ile znaków kodu z odpowiedzi awaryjn
 # "brak dokładnego trafienia". Bez tej listy model wnioskował, że np. GetGame() nie istnieje.
 # Wartość: krótka informacja dla modelu (pusty tekst = tylko ostrzeżenie).
 API_GLOBAL_FUNCTIONS = {
-    "GetGame": "GetGame() zwraca obiekt gry ArmaReforgerScripted; jego metody wywołujesz jako GetGame().Metoda(...).",
-    "Print": "Deklarację z pliku gry silnik dopisuje poniżej (jeśli plik jest w danych gry).",
-    "PrintFormat": "Deklarację z pliku gry silnik dopisuje poniżej (jeśli plik jest w danych gry).",
+    "GetGame": tr("GetGame() zwraca obiekt gry ArmaReforgerScripted; jego metody wywołujesz jako GetGame().Metoda(...).",
+                  "GetGame() returns the game object ArmaReforgerScripted; call its methods as GetGame().Method(...)."),
+    "Print": tr("Deklarację z pliku gry silnik dopisuje poniżej (jeśli plik jest w danych gry).",
+                "The engine appends the declaration from the game file below (if the file is in the game data)."),
+    "PrintFormat": tr("Deklarację z pliku gry silnik dopisuje poniżej (jeśli plik jest w danych gry).",
+                      "The engine appends the declaration from the game file below (if the file is in the game data)."),
 }
 # Klasy bazowe nieznane danym API BK (prawie połowa klas Arma ma pustą listę rodziców): silnik odczytuje
 # deklarację klasy z pliku gry (asset_search + game_read) i uzupełnia łańcuch dziedziczenia.
@@ -194,9 +210,13 @@ SYNTH_ITEM_MAX_CHARS = 9000      # maks. jeden wynik (wcześniej 3500: ucinało 
 CONTENT_SEARCH_ALIASES = ("game_search", "search_files", "file_search", "search_content", "find_in_files",
                           "search_in_files", "grep_files", "content_search")
 # Odwołania do numerów linii w odpowiedzi ("linia 12", "linie 8-12", "linii 5-7").
-LINE_REF_RE = r"\blini(?:a|e|i|ach|ę)\s*(?:nr\.?\s*)?~?\s*(\d{1,5})(?:\s*[-‑–]\s*(\d{1,5}))?"
+# Od 2.0.0 także po angielsku ("line 12", "lines 8-12").
+LINE_REF_RE = (r"\b(?:lini(?:a|e|i|ach|ę)|lines?)\s*(?:nr\.?\s*|no\.\s*|#)?~?\s*(\d{1,5})"
+               r"(?:\s*[-‑–]\s*(\d{1,5}))?")
+# Nagłówek kolumny tabeli z numerami linii ("Linia", "Linie", "Line", "Lines").
+LINE_COLUMN_RE = r"(?i)[*`]*(?:lini|line)"
 # Uwagi weryfikatora, które NIE uruchamiają rundy poprawkowej (często cytat z pominięciami).
-VERIFY_NO_FIX_MARKERS = ("nie sąsiadują",)
+VERIFY_NO_FIX_MARKERS = ("nie sąsiadują", "not adjacent")
 
 
 # ---------------------------------------------------------------- od 1.8.6
@@ -208,12 +228,18 @@ QUESTION_NAME_RE = r"\b([A-Z][A-Za-z0-9]*_[A-Za-z0-9_]+|[A-Z][a-z0-9]+(?:[A-Z][a
 # Rozumowanie modelu, które wyciekło do treści odpowiedzi (gpt-oss bez osobnego pola thinking).
 REASONING_LEAK_START_RE = r"^\s*(?:We need to|We have|We should|We must|Let's|Let us|The user|User asks|I need to|Need to)\b"
 REASONING_LEAK_MARKERS_RE = r"\b(?:We need|We should|We have|We must|Let's|We can|We might|Thus|So we)\b"
+# Od 2.0.0: w wersji angielskiej odpowiedź też jest po angielsku, więc wyciek musi mieć więcej znaczników rozumowania.
+REASONING_LEAK_MIN_MARKERS = 3 if EN else 2
 # Ile razy ten sam wiersz tabeli / linia tekstu może się powtórzyć, zanim silnik uzna to za zapętlenie.
 REPEAT_LINE_MAX = 2
 # Zalecanie SCR_ jako prefiksu własnego moda (w prozie).
-SCR_TAG_TEXT_RE = (r"(?:prefiks\w*|tag\w*)\s*[:`*]*\s*`?SCR_`?\s*\+|`?SCR_`?\s*\+\s*(?:własn|tag|nazw)"
-                   r"|(?:tag|prefiks)[^\n]{0,80}\(np\.\s*`?SCR_`?\s*[,)]"
-                   r"|(?:używaj|użyj|stosuj|zacznij)\w*\s+(?:od\s+)?(?:prefiksu\s+)?`?SCR_`?\s*(?:\+|jako|dla)")
+SCR_TAG_TEXT_RE = (r"(?:prefiks\w*|prefix\w*|tag\w*)\s*[:`*]*\s*`?SCR_`?\s*\+|`?SCR_`?\s*\+\s*(?:własn|tag|nazw|your|own|name)"
+                   r"|(?:tag|prefiks|prefix)[^\n]{0,80}\((?:np\.|e\.g\.)\s*`?SCR_`?\s*[,)]"
+                   r"|(?<!nie )(?:używaj|użyj|stosuj|zacznij)\w*\s+(?:od\s+)?(?:prefiksu\s+)?`?SCR_`?\s*(?:\+|jako|dla)"
+                   r"|(?<!not )(?<!n't )(?<!never )\b(?:use|start\s+with|prefix\s+with)\s+(?:the\s+)?(?:prefix\s+)?`?SCR_`?\s*"
+                   r"(?:\+|as\b|for\b)"
+                   r"|(?<!not )(?<!n't )(?<!never )\b(?:use|start\s+with)\s+(?:the\s+)?`?SCR_`?\s+prefix\s+(?:for|as|in|on)\s+"
+                   r"(?:your|all|mod|own|new)")
 # Typy wartości Enforce Script (do kontroli typu zwracanego przy przypisaniu).
 VALUE_TYPES = ("int", "float", "bool", "string", "vector", "ResourceName")
 VALUE_TYPE_COMPAT = (("int", "float"), ("float", "int"), ("string", "ResourceName"), ("ResourceName", "string"))

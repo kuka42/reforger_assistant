@@ -14,6 +14,8 @@ Test na prawdziwym BaseUserAction.c (5280 zn.):
 import re
 from urllib.parse import unquote
 
+from reforger_i18n import tr
+
 # nazwy, które modele (zwł. gpt-oss) halucynują z własnego treningu
 ALIASES = {
     "search": "api_search", "grep": "api_search", "find": "asset_search",
@@ -74,8 +76,9 @@ def repair_tool_call(name, args, tools):
     if name not in tools:
         target = ALIASES.get(name.lower())
         if target not in tools:
-            return None, args, [f"Nie ma narzędzia '{name}'. Dostępne: {', '.join(tools)}."]
-        notes.append(f"'{name}' nie istnieje -> użyto {target}")
+            return None, args, [tr(f"Nie ma narzędzia '{name}'. Dostępne: {', '.join(tools)}.",
+                                   f"There is no tool '{name}'. Available: {', '.join(tools)}.")]
+        notes.append(tr(f"'{name}' nie istnieje -> użyto {target}", f"'{name}' does not exist -> used {target}"))
         args = dict(args)
         q = args.get("query") or args.get("q") or args.get("pattern") or args.get("path") or ""
         q = re.sub(r"^(class|modded class|enum)\s+", "", str(q)).strip()
@@ -90,22 +93,24 @@ def repair_tool_call(name, args, tools):
     clean = {}
     for k, v in args.items():
         if k not in props:
-            notes.append(f"pominięto nieznany argument '{k}'")
+            notes.append(tr(f"pominięto nieznany argument '{k}'", f"unknown argument '{k}' skipped"))
             continue
         cv = _coerce(v, props[k])
         if cv is None:
-            notes.append(f"pominięto argument '{k}' (zła wartość: {v!r}; dozwolone: {props[k].get('enum') or props[k].get('type')})")
+            notes.append(tr(f"pominięto argument '{k}' (zła wartość: {v!r}; dozwolone: {props[k].get('enum') or props[k].get('type')})",
+                            f"argument '{k}' skipped (bad value: {v!r}; allowed: {props[k].get('enum') or props[k].get('type')})"))
         else:
             if cv != v: notes.append(f"'{k}': {v!r} -> {cv!r}")
             clean[k] = cv
     if name == "wiki_read" and isinstance(clean.get("title"), str):
         norm = normalize_wiki_title(clean["title"])
         if norm != clean["title"]:
-            notes.append(f"'title': {clean['title']!r} -> {norm!r} (tytuł jak w nagłówku wyniku wiki_search)")
+            notes.append(tr(f"'title': {clean['title']!r} -> {norm!r} (tytuł jak w nagłówku wyniku wiki_search)",
+                            f"'title': {clean['title']!r} -> {norm!r} (title as in the wiki_search result header)"))
             clean["title"] = norm
     miss = [r for r in tools[name].get("inputSchema", {}).get("required", []) if r not in clean]
     if miss:
-        return None, clean, [f"{name}: brak wymaganych argumentów {miss}"] + notes
+        return None, clean, [tr(f"{name}: brak wymaganych argumentów {miss}", f"{name}: missing required arguments {miss}")] + notes
     return name, clean, notes
 
 

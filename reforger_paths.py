@@ -24,6 +24,38 @@ PATH_FIELDS = {
     "docs_path": ("REFORGER_DOCS_PATH", "Folder docs dokumentacji API (opcjonalny)"),
 }
 SOURCE_LABELS = {"env": "zmienna środowiskowa", "settings": "ustawienia (interfejs)", "default": "domyślna"}
+# Od 2.0.1: opisy pól i komunikaty sprawdzania w języku interfejsu.
+PATH_LABELS_EN = {
+    "mcp_script": "The dist/index.js file of the Enfusion MCP BK server",
+    "game_path": "Folder of the installed Arma Reforger game",
+    "docs_path": "docs folder of the API documentation (optional)",
+}
+SOURCE_LABELS_EN = {"env": "environment variable", "settings": "settings (interface)", "default": "default"}
+SUPPORTED_LANGS = ("pl", "en")
+
+
+def ui_lang() -> str:
+    """Język interfejsu (od 2.0.1): zmienna REFORGER_LANG > "lang" w settings.json > "pl". Czytany przy każdym
+    żądaniu, więc przełącznik w interfejsie działa od razu; silnik zmienia język dopiero po ponownym uruchomieniu."""
+    value = os.environ.get("REFORGER_LANG", "").strip().lower()
+    if value in SUPPORTED_LANGS:
+        return value
+    saved = str(read_settings().get("lang", "")).strip().lower()
+    return saved if saved in SUPPORTED_LANGS else "pl"
+
+
+def ui_tr(pl: str, en: str) -> str:
+    return en if ui_lang() == "en" else pl
+
+
+def path_label(key: str) -> str:
+    return PATH_LABELS_EN[key] if ui_lang() == "en" else PATH_FIELDS[key][1]
+
+
+def source_label(source: str) -> str:
+    if ui_lang() == "en":
+        return SOURCE_LABELS_EN.get(source, "automatically next to the game")
+    return SOURCE_LABELS.get(source, "automatycznie obok gry")
 
 
 def read_settings() -> dict:
@@ -51,7 +83,8 @@ def clean_path(value) -> str:
         return ""
     value = value.strip().strip('"').strip("'").strip()
     if len(value) > MAX_PATH_LEN or any(ord(c) < 32 for c in value):
-        raise ValueError("nieprawidłowa ścieżka (za długa albo ze znakami sterującymi)")
+        raise ValueError(ui_tr("nieprawidłowa ścieżka (za długa albo ze znakami sterującymi)",
+                               "invalid path (too long or with control characters)"))
     return value
 
 
@@ -87,42 +120,48 @@ def default_docs_path(game_path: str) -> str:
 
 def check_mcp_script(path: str) -> tuple[bool, str]:
     if not path:
-        return False, "podaj ścieżkę do pliku index.js"
+        return False, ui_tr("podaj ścieżkę do pliku index.js", "enter the path to the index.js file")
     p = Path(path)
     if p.is_dir():
         hint = p / "dist" / "index.js"
-        return False, ("to jest folder; plik serwera to " + str(hint)) if hint.is_file() else "to jest folder, a nie plik index.js"
+        if hint.is_file():
+            return False, ui_tr("to jest folder; plik serwera to ", "this is a folder; the server file is ") + str(hint)
+        return False, ui_tr("to jest folder, a nie plik index.js", "this is a folder, not the index.js file")
     if not p.is_file():
-        return False, "nie ma takiego pliku"
+        return False, ui_tr("nie ma takiego pliku", "no such file")
     if p.suffix.lower() != ".js":
-        return False, "to nie jest plik .js"
+        return False, ui_tr("to nie jest plik .js", "this is not a .js file")
     if not shutil.which("node"):
-        return False, "plik jest, ale nie znaleziono programu node (Node.js) w PATH"
-    return True, "plik serwera jest, Node.js dostępny"
+        return False, ui_tr("plik jest, ale nie znaleziono programu node (Node.js) w PATH",
+                            "the file exists, but the node program (Node.js) was not found in PATH")
+    return True, ui_tr("plik serwera jest, Node.js dostępny", "server file found, Node.js available")
 
 
 def check_game_path(path: str) -> tuple[bool, str]:
     if not path:
-        return False, "podaj folder gry"
+        return False, ui_tr("podaj folder gry", "enter the game folder")
     p = Path(path)
     if not p.is_dir():
-        return False, "nie ma takiego folderu"
+        return False, ui_tr("nie ma takiego folderu", "no such folder")
     if not (p / "addons").is_dir():
-        return False, "brak podfolderu addons - to chyba nie jest folder gry Arma Reforger"
-    return True, "folder gry jest (addons)"
+        return False, ui_tr("brak podfolderu addons - to chyba nie jest folder gry Arma Reforger",
+                            "no addons subfolder - this does not seem to be the Arma Reforger game folder")
+    return True, ui_tr("folder gry jest (addons)", "game folder found (addons)")
 
 
 def check_docs_path(path: str) -> tuple[bool, str]:
     if not path:
-        return False, "brak ścieżki"
+        return False, ui_tr("brak ścieżki", "no path")
     p = Path(path)
     if not p.is_dir():
-        return False, "nie ma takiego folderu (bez dokumentacji asystent bierze klasy bazowe z plików gry)"
+        return False, ui_tr("nie ma takiego folderu (bez dokumentacji asystent bierze klasy bazowe z plików gry)",
+                            "no such folder (without the documentation the assistant takes base classes from game files)")
     found = [name for name in ("ArmaReforgerScriptAPIPublic", "EnfusionScriptAPI")
              if (p / name / "html" / "hierarchy.html").is_file()]
     if not found:
-        return False, "brak plików */html/hierarchy.html - to chyba nie jest folder Workbench\\docs"
-    return True, "hierarchia klas: " + ", ".join(found)
+        return False, ui_tr("brak plików */html/hierarchy.html - to chyba nie jest folder Workbench\\docs",
+                            "no */html/hierarchy.html files - this does not seem to be the Workbench\\docs folder")
+    return True, ui_tr("hierarchia klas: ", "class hierarchy: ") + ", ".join(found)
 
 
 def check_all(values: dict[str, str]) -> dict[str, dict]:
@@ -136,5 +175,5 @@ def check_all(values: dict[str, str]) -> dict[str, dict]:
         ok, message = fn(value)
         out[key] = {"ok": ok, "message": message, "value": value}
     if not values.get("docs_path"):
-        out["docs_path"]["message"] = "(obok gry) " + out["docs_path"]["message"]
+        out["docs_path"]["message"] = ui_tr("(obok gry) ", "(next to the game) ") + out["docs_path"]["message"]
     return out

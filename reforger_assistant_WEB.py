@@ -16,6 +16,7 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
+import os
 from pathlib import Path
 import re
 import secrets
@@ -30,6 +31,8 @@ import webbrowser
 
 import reforger_assistant_MCP_BK as engine
 import reforger_paths as paths
+from reforger_i18n import LANG, tr
+from reforger_paths import ui_lang, ui_tr as ut      # od 2.0.1: komunikaty dla interfejsu w języku interfejsu
 
 BASE = Path(__file__).resolve().parent
 HTML = BASE / "assistant.html"
@@ -60,7 +63,12 @@ EMERGENCY_MARKERS = (
     "_[Podsumowanie dostępnych wyników MCP:",
     "Model dwukrotnie zwrócił pustą odpowiedź",
     "Nie udało się zebrać żadnych potwierdzonych wyników MCP",
+    "_[Summary of the available MCP results:",          # od 2.0.0: odpowiedzi silnika po angielsku
+    "The model returned an empty answer twice",
+    "No confirmed MCP results could be collected",
 )
+# Domyślne tytuły nowej rozmowy (od 2.0.1 w języku interfejsu; rozpoznajemy oba).
+DEFAULT_TITLES = ("Nowa rozmowa", "New conversation")
 
 
 def is_emergency_answer(text: str) -> bool:
@@ -149,7 +157,8 @@ class Application:
                     "busy": False,
                 }
         except (OSError, ValueError, KeyError, TypeError) as exc:
-            print(f"[WEB] Nie udało się odczytać historii: {exc}; rozpoczynam bez zapisanych sesji.", file=sys.stderr)
+            print(tr(f"[WEB] Nie udało się odczytać historii: {exc}; rozpoczynam bez zapisanych sesji.",
+                     f"[WEB] Could not read the history: {exc}; starting without saved sessions."), file=sys.stderr)
 
     def _save_locked(self) -> None:
         # Nigdy nie zapisujemy messages: zawieraja surowe wyniki MCP/kod gry.
@@ -213,7 +222,7 @@ class Application:
                                "tools": tools})
             result = {"ok": True, "models": sorted(models, key=lambda m: m["name"].lower()), "error": None}
         except (OSError, ValueError) as exc:     # URLError, timeout, zły JSON
-            result = {"ok": False, "models": [], "error": f"Ollama nie odpowiada ({exc})"}
+            result = {"ok": False, "models": [], "error": ut(f"Ollama nie odpowiada ({exc})", f"Ollama is not responding ({exc})")}
         with self.lock:
             self._models_cache = (now, result)
         return result
@@ -221,28 +230,32 @@ class Application:
     def update_settings(self, data: dict) -> dict:
         new_model, new_ctx = data.get("model"), data.get("num_ctx")
         if new_model is None and new_ctx is None:
-            raise UserError(400, "Brak zmian: podaj model lub num_ctx")
+            raise UserError(400, ut("Brak zmian: podaj model lub num_ctx", "No changes: give model or num_ctx"))
         if new_model is not None:
             if not isinstance(new_model, str) or not MODEL_NAME_RE.fullmatch(new_model):
-                raise UserError(400, "Nieprawidłowa nazwa modelu")
+                raise UserError(400, ut("Nieprawidłowa nazwa modelu", "Invalid model name"))
             listing = self.list_models(force=True)
             if not listing["ok"]:
-                raise UserError(503, "Ollama nie odpowiada, nie można zmienić modelu: " + str(listing["error"]))
+                raise UserError(503, ut("Ollama nie odpowiada, nie można zmienić modelu: ",
+                                        "Ollama is not responding, the model cannot be changed: ") + str(listing["error"]))
             found = next((m for m in listing["models"] if m["name"] == new_model), None)
             if not found:
-                raise UserError(400, f"Model '{new_model}' nie jest zainstalowany w Ollamie (ollama pull {new_model})")
+                raise UserError(400, ut(f"Model '{new_model}' nie jest zainstalowany w Ollamie (ollama pull {new_model})",
+                                        f"Model '{new_model}' is not installed in Ollama (ollama pull {new_model})"))
             if found["tools"] is False:
-                raise UserError(400, f"Model '{new_model}' nie obsługuje wywoływania narzędzi, a asystent ich potrzebuje")
+                raise UserError(400, ut(f"Model '{new_model}' nie obsługuje wywoływania narzędzi, a asystent ich potrzebuje",
+                                        f"Model '{new_model}' does not support tool calling, which the assistant needs"))
         if new_ctx is not None:
             if isinstance(new_ctx, bool) or not isinstance(new_ctx, int) or not MIN_NUM_CTX <= new_ctx <= MAX_NUM_CTX:
-                raise UserError(400, f"Kontekst musi być liczbą całkowitą od {MIN_NUM_CTX} do {MAX_NUM_CTX}")
+                raise UserError(400, ut(f"Kontekst musi być liczbą całkowitą od {MIN_NUM_CTX} do {MAX_NUM_CTX}",
+                                        f"The context must be an integer from {MIN_NUM_CTX} to {MAX_NUM_CTX}"))
         with self.lock:
             model = new_model if new_model is not None else self.model
             num_ctx = new_ctx if new_ctx is not None else self.num_ctx
             try:
                 self._save_settings({"version": 1, "model": model, "num_ctx": num_ctx})
             except OSError as exc:
-                raise UserError(500, f"Nie udało się zapisać ustawień: {exc}") from exc
+                raise UserError(500, ut(f"Nie udało się zapisać ustawień: {exc}", f"Could not save the settings: {exc}")) from exc
             self.model, self.num_ctx = model, num_ctx
             self._models_cache = None
             return self.get_settings()
@@ -252,15 +265,37 @@ class Application:
         # Od 1.9.0 zapis z zachowaniem innych kluczy (ścieżki ustawione w interfejsie).
         paths.write_settings({k: v for k, v in payload.items() if k != "version"})
 
+    # ---------------------------------------------------------------- język (od 2.0.1)
+    # Interfejs zmienia język od razu, silnik dopiero po ponownym uruchomieniu (teksty dla modelu są ustawiane przy starcie).
+    @staticmethod
+    def lang_info() -> dict:
+        locked = os.environ.get("REFORGER_LANG", "").strip().lower() in paths.SUPPORTED_LANGS
+        ui = ui_lang()
+        return {"lang": LANG, "ui_lang": ui, "lang_locked": locked, "lang_restart_needed": ui != LANG}
+
+    def set_lang(self, data: dict) -> dict:
+        lang = str(data.get("lang", "")).strip().lower()
+        if lang not in paths.SUPPORTED_LANGS:
+            raise UserError(400, ut("Nieobsługiwany język (pl albo en)", "Unsupported language (pl or en)"))
+        if self.lang_info()["lang_locked"]:
+            raise UserError(409, ut("Język ustawia zmienna REFORGER_LANG w pliku uruchomieniowym; zmień ją tam.",
+                                    "The language is set by the REFORGER_LANG variable in the launcher; change it there."))
+        try:
+            with self.lock:
+                paths.write_settings({"lang": lang})
+        except OSError as exc:
+            raise UserError(500, ut(f"Nie udało się zapisać ustawień: {exc}", f"Could not save the settings: {exc}")) from exc
+        return self.lang_info()
+
     # ---------------------------------------------------------------- ścieżki (od 1.9.0; działają od restartu)
     def get_paths(self) -> dict:
         saved = paths.saved_paths()
         active = {"mcp_script": engine.MCP_SCRIPT, "game_path": engine.GAME_PATH, "docs_path": engine.DOCS_PATH}
         fields = {}
-        for key, (env_name, label) in paths.PATH_FIELDS.items():
+        for key, (env_name, _label) in paths.PATH_FIELDS.items():
             source = engine.PATH_SOURCES.get(key, "default")
-            fields[key] = {"label": label, "env": env_name, "active": active[key],
-                           "source": source, "source_label": paths.SOURCE_LABELS.get(source, "automatycznie obok gry"),
+            fields[key] = {"label": paths.path_label(key), "env": env_name, "active": active[key],
+                           "source": source, "source_label": paths.source_label(source),
                            "saved": saved.get(key, ""), "locked": source == "env"}
         # Restart potrzebny, gdy zapisana ścieżka różni się od tej, z którą silnik wystartował (i nie wygrywa env).
         pending = [k for k, f in fields.items()
@@ -288,7 +323,7 @@ class Application:
             with self.lock:
                 paths.write_settings({"paths": {k: v for k, v in values.items() if v}})
         except OSError as exc:
-            raise UserError(500, f"Nie udało się zapisać ustawień: {exc}") from exc
+            raise UserError(500, ut(f"Nie udało się zapisać ustawień: {exc}", f"Could not save the settings: {exc}")) from exc
         result = self.get_paths()
         result["checks"] = checks
         return result
@@ -302,9 +337,10 @@ class Application:
     def create_session(self) -> dict:
         with self.lock:
             if len(self.sessions) >= MAX_SESSIONS:
-                raise UserError(409, "Osiągnięto limit rozmów. Usuń starszą rozmowę.")
+                raise UserError(409, ut("Osiągnięto limit rozmów. Usuń starszą rozmowę.",
+                                        "The conversation limit was reached. Delete an older conversation."))
             sid = unique_id()
-            s = {"id": sid, "title": "Nowa rozmowa", "created_at": now_iso(),
+            s = {"id": sid, "title": ut("Nowa rozmowa", "New conversation"), "created_at": now_iso(),
                  "updated_at": now_iso(), "turns": [], "traces": [],
                  "messages": [{"role": "system", "content": engine.SYSTEM_PROMPT}],
                  "busy": False}
@@ -316,39 +352,44 @@ class Application:
         with self.lock:
             s = self.sessions.get(sid)
             if not s:
-                raise UserError(404, "Nie znaleziono rozmowy")
+                raise UserError(404, ut("Nie znaleziono rozmowy", "Conversation not found"))
             return as_public_session(s, detail=True)
 
     def delete_session(self, sid: str) -> None:
         with self.lock:
             s = self.sessions.get(sid)
             if not s:
-                raise UserError(404, "Nie znaleziono rozmowy")
+                raise UserError(404, ut("Nie znaleziono rozmowy", "Conversation not found"))
             if s["busy"]:
-                raise UserError(409, "Nie można usunąć rozmowy podczas generowania odpowiedzi")
+                raise UserError(409, ut("Nie można usunąć rozmowy podczas generowania odpowiedzi",
+                                        "A conversation cannot be deleted while an answer is being generated"))
             del self.sessions[sid]
             self._save_locked()
 
     def submit(self, sid: str, question: str) -> dict:
         if self.mcp is None:
-            raise UserError(503, "Asystent jest w trybie konfiguracji: ustaw ścieżki (przycisk „ścieżki” u góry), "
-                                 "zapisz i uruchom asystenta ponownie.")
+            raise UserError(503, ut("Asystent jest w trybie konfiguracji: ustaw ścieżki (przycisk „ścieżki” u góry), "
+                                    "zapisz i uruchom asystenta ponownie.",
+                                    "The assistant is in setup mode: set the paths (the 'paths' button at the top), "
+                                    "save and restart the assistant."))
         question = question.strip()
         if not question or len(question) > MAX_QUESTION_LENGTH:
-            raise UserError(400, f"Wiadomość musi mieć 1–{MAX_QUESTION_LENGTH} znaków")
+            raise UserError(400, ut(f"Wiadomość musi mieć 1–{MAX_QUESTION_LENGTH} znaków",
+                                    f"The message must have 1–{MAX_QUESTION_LENGTH} characters"))
         with self.lock:
             s = self.sessions.get(sid)
             if not s:
-                raise UserError(404, "Nie znaleziono rozmowy")
+                raise UserError(404, ut("Nie znaleziono rozmowy", "Conversation not found"))
             if s["busy"]:
-                raise UserError(409, "Poczekaj na zakończenie bieżącej odpowiedzi w tej rozmowie")
+                raise UserError(409, ut("Poczekaj na zakończenie bieżącej odpowiedzi w tej rozmowie",
+                                        "Wait until the current answer in this conversation is finished"))
             s["busy"] = True
             s["turns"].append({"role": "user", "content": question})
-            if s["title"] == "Nowa rozmowa":
-                s["title"] = " ".join(question.split())[:65] or "Nowa rozmowa"
+            if s["title"] in DEFAULT_TITLES:
+                s["title"] = " ".join(question.split())[:65] or s["title"]
             s["updated_at"] = now_iso()
             job_id = unique_id()
-            job = {"id": job_id, "session_id": sid, "status": "queued", "phase": "Oczekiwanie na model",
+            job = {"id": job_id, "session_id": sid, "status": "queued", "phase": ut("Oczekiwanie na model", "Waiting for the model"),
                    "answer": None, "error": None, "tool_events": [], "created_at": now_iso()}
             self.jobs[job_id] = job
             # Ograniczamy zapamietane joby; metadane narzedzi sa tez w sesji.
@@ -410,16 +451,16 @@ class Application:
                 # Na dysku zapisujemy wyłącznie turns i metadane (jak wcześniej).
                 # Po restarcie aplikacji surowe wyniki MCP nie są odtwarzane.
                 job["status"] = "done"
-                job["phase"] = "Gotowe"
+                job["phase"] = ut("Gotowe", "Done")
                 job["answer"] = answer
         except Exception as exc:
             with self.lock:
                 job["status"] = "error"
-                job["phase"] = "Błąd"
+                job["phase"] = ut("Błąd", "Error")
                 job["error"] = str(exc)[:2000]
                 # Po niepelnej turze nie pozostawiaj niezamknietych tool_calls.
                 session["messages"] = history_from_turns(session["turns"])
-            print(f"[WEB] Błąd rozmowy: {exc}", file=sys.stderr)
+            print(tr(f"[WEB] Błąd rozmowy: {exc}", f"[WEB] Conversation error: {exc}"), file=sys.stderr)
         finally:
             with self.lock:
                 session["busy"] = False
@@ -427,13 +468,13 @@ class Application:
                 try:
                     self._save_locked()
                 except OSError as exc:
-                    print(f"[WEB] Nie udało się zapisać historii: {exc}", file=sys.stderr)
+                    print(tr(f"[WEB] Nie udało się zapisać historii: {exc}", f"[WEB] Could not save the history: {exc}"), file=sys.stderr)
 
     def get_job(self, jid: str) -> dict:
         with self.lock:
             job = self.jobs.get(jid)
             if not job:
-                raise UserError(404, "Nie znaleziono zadania")
+                raise UserError(404, ut("Nie znaleziono zadania", "Job not found"))
             return {**job, "tool_events": [dict(event) for event in job["tool_events"]]}
 
     def close(self) -> None:
@@ -477,7 +518,7 @@ def make_handler(app: Application, port: int):
             try:
                 raw = HTML.read_bytes()
             except OSError:
-                self._json(500, {"error": f"Brak pliku {HTML.name} obok Pythona"})
+                self._json(500, {"error": ut(f"Brak pliku {HTML.name} obok Pythona", f"{HTML.name} is missing next to Python")})
                 return
             self.send_response(200)
             self.send_header("Content-Type", "text/html; charset=utf-8")
@@ -492,19 +533,19 @@ def make_handler(app: Application, port: int):
             try:
                 size = int(self.headers.get("Content-Length", "0"))
             except ValueError:
-                raise UserError(400, "Nieprawidłowy rozmiar żądania")
+                raise UserError(400, ut("Nieprawidłowy rozmiar żądania", "Invalid request size"))
             if size < 0 or size > MAX_REQUEST_BYTES:
-                raise UserError(413, "Za duże żądanie")
+                raise UserError(413, ut("Za duże żądanie", "Request too large"))
             if self.headers.get("Content-Type", "").split(";")[0].strip() != "application/json":
-                raise UserError(415, "Wymagany Content-Type: application/json")
+                raise UserError(415, ut("Wymagany Content-Type: application/json", "Content-Type: application/json is required"))
             if self.headers.get("X-Assistant-UI") != "1":
-                raise UserError(403, "Brakuje nagłówka lokalnego interfejsu")
+                raise UserError(403, ut("Brakuje nagłówka lokalnego interfejsu", "The local interface header is missing"))
             try:
                 data = json.loads(self.rfile.read(size).decode("utf-8"))
             except (ValueError, UnicodeError):
-                raise UserError(400, "Nieprawidłowy JSON")
+                raise UserError(400, ut("Nieprawidłowy JSON", "Invalid JSON"))
             if not isinstance(data, dict):
-                raise UserError(400, "Wymagany obiekt JSON")
+                raise UserError(400, ut("Wymagany obiekt JSON", "A JSON object is required"))
             return data
 
         def _dispatch_get(self, path: str) -> None:
@@ -518,7 +559,7 @@ def make_handler(app: Application, port: int):
                 self._json(200, {"version": engine.VERSION, "model": app.model, "settings": app.get_settings(),
                                  "tools": list(app.mcp.tools) if app.mcp else [], "sessions": app.list_sessions(),
                                  "status": "connected" if app.mcp else "setup", "setup_error": app.setup_error,
-                                 "read_only": True})
+                                 "read_only": True, **app.lang_info()})
             elif path == "/api/paths":
                 self._json(200, app.get_paths())
             elif path.startswith("/api/sessions/"):
@@ -526,11 +567,13 @@ def make_handler(app: Application, port: int):
             elif path.startswith("/api/jobs/"):
                 self._json(200, app.get_job(path.removeprefix("/api/jobs/")))
             else:
-                raise UserError(404, "Nie znaleziono ścieżki")
+                raise UserError(404, ut("Nie znaleziono ścieżki", "Path not found"))
 
         def _dispatch_post(self, path: str, data: dict) -> None:
             if path == "/api/settings":
                 self._json(200, app.update_settings(data))
+            elif path == "/api/lang":
+                self._json(200, app.set_lang(data))
             elif path == "/api/paths/check":
                 self._json(200, app.check_paths(data))
             elif path == "/api/paths":
@@ -540,18 +583,18 @@ def make_handler(app: Application, port: int):
             elif path.startswith("/api/sessions/") and path.endswith("/chat"):
                 sid = path.removeprefix("/api/sessions/").removesuffix("/chat")
                 if not isinstance(data.get("text"), str):
-                    raise UserError(400, "Brak tekstu wiadomości")
+                    raise UserError(400, ut("Brak tekstu wiadomości", "No message text"))
                 self._json(202, app.submit(sid, data["text"]))
             elif path.startswith("/api/sessions/") and path.endswith("/delete"):
                 sid = path.removeprefix("/api/sessions/").removesuffix("/delete")
                 app.delete_session(sid)
                 self._json(200, {"ok": True})
             else:
-                raise UserError(404, "Nie znaleziono ścieżki")
+                raise UserError(404, ut("Nie znaleziono ścieżki", "Path not found"))
 
         def do_GET(self) -> None:
             if not self._safe_host():
-                self._json(403, {"error": "Nieprawidłowy host"})
+                self._json(403, {"error": ut("Nieprawidłowy host", "Invalid host")})
                 return
             try:
                 self._dispatch_get(urlsplit(self.path).path)
@@ -562,7 +605,7 @@ def make_handler(app: Application, port: int):
 
         def do_POST(self) -> None:
             if not self._safe_host() or not self._safe_origin():
-                self._json(403, {"error": "Żądanie spoza lokalnego interfejsu"})
+                self._json(403, {"error": ut("Żądanie spoza lokalnego interfejsu", "Request from outside the local interface")})
                 return
             try:
                 data = self._read_json()
@@ -570,15 +613,16 @@ def make_handler(app: Application, port: int):
             except UserError as exc:
                 self._json(exc.code, {"error": str(exc)})
             except OSError as exc:
-                self._json(500, {"error": f"Błąd zapisu historii: {exc}"})
+                self._json(500, {"error": ut(f"Błąd zapisu historii: {exc}", f"Error saving the history: {exc}")})
             except Exception as exc:  # noqa: BLE001
                 self._internal_error(exc)
 
         def _internal_error(self, exc: Exception) -> None:
-            print(f"[WEB] Nieoczekiwany błąd obsługi {self.command} {self.path}: {exc!r}", file=sys.stderr)
+            print(tr(f"[WEB] Nieoczekiwany błąd obsługi {self.command} {self.path}: {exc!r}",
+                     f"[WEB] Unexpected error handling {self.command} {self.path}: {exc!r}"), file=sys.stderr)
             traceback.print_exc()
             try:
-                self._json(500, {"error": "Błąd wewnętrzny serwera (szczegóły w konsoli)"})
+                self._json(500, {"error": ut("Błąd wewnętrzny serwera (szczegóły w konsoli)", "Internal server error (details in the console)")})
             except OSError:
                 pass
 
@@ -607,9 +651,10 @@ def resolve_startup_settings(cli_model, cli_ctx, saved: dict) -> tuple[str, int,
     model = cli_model or saved.get("model") or engine.MODEL
     num_ctx = cli_ctx or saved.get("num_ctx") or engine.NUM_CTX
     sources = []
-    sources.append("argument" if cli_model else "plik ustawień" if saved.get("model") else "domyślny/środowisko")
-    sources.append("argument" if cli_ctx else "plik ustawień" if saved.get("num_ctx") else "domyślny/środowisko")
-    return model, num_ctx, f"model: {sources[0]}, kontekst: {sources[1]}"
+    from_file, default = tr("plik ustawień", "settings file"), tr("domyślny/środowisko", "default/environment")
+    sources.append("argument" if cli_model else from_file if saved.get("model") else default)
+    sources.append("argument" if cli_ctx else from_file if saved.get("num_ctx") else default)
+    return model, num_ctx, f"model: {sources[0]}, " + tr("kontekst", "context") + f": {sources[1]}"
 
 
 def main() -> int:
@@ -622,43 +667,46 @@ def main() -> int:
     if not 1 <= args.port <= 65535:
         parser.error("--port musi być z zakresu 1–65535")
     if not HTML.is_file():
-        print(f"Brak {HTML.name} w folderze {BASE}", file=sys.stderr)
+        print(tr(f"Brak {HTML.name} w folderze {BASE}", f"{HTML.name} is missing in the folder {BASE}"), file=sys.stderr)
         return 1
-    print("REFORGER ASSISTANT WEB | MCP BK tylko do odczytu | silnik", engine.VERSION)
+    print(tr("REFORGER ASSISTANT WEB | MCP BK tylko do odczytu | silnik", "REFORGER ASSISTANT WEB | MCP BK read-only | engine"),
+          engine.VERSION, "|", tr("język:", "language:"), LANG)
     model, num_ctx, source = resolve_startup_settings(args.model, args.num_ctx, load_saved_settings())
     try:
         mcp_context = engine.MCPStdioClient()
         mcp = mcp_context.__enter__()
         setup_error = ""
-        print("Połączono z BK:", ", ".join(mcp.tools))
+        print(tr("Połączono z BK:", "Connected to BK:"), ", ".join(mcp.tools))
     except (engine.MCPError, OSError) as exc:
         # Od 1.9.0: zła ścieżka BK albo gry nie kończy programu. Serwer startuje w trybie konfiguracji,
         # a interfejs od razu pokazuje formularz ścieżek.
         mcp_context = mcp = None
         setup_error = str(exc)
-        print(f"BŁĄD BK: {exc}", file=sys.stderr)
-        print("TRYB KONFIGURACJI: ustaw ścieżki w przeglądarce (przycisk „ścieżki”), zapisz i uruchom asystenta ponownie.")
+        print(tr(f"BŁĄD BK: {exc}", f"BK ERROR: {exc}"), file=sys.stderr)
+        print(tr("TRYB KONFIGURACJI: ustaw ścieżki w przeglądarce (przycisk „ścieżki”), zapisz i uruchom asystenta ponownie.",
+                 "SETUP MODE: set the paths in the browser (the 'ścieżki' button), save and restart the assistant."))
     try:
-        print(f"Model: {model} | kontekst: {num_ctx} ({source})")
+        print(f"Model: {model} | " + tr("kontekst", "context") + f": {num_ctx} ({source})")
         app = Application(mcp, model, num_ctx, setup_error)
         try:
             server = ThreadingHTTPServer(("127.0.0.1", args.port), make_handler(app, args.port))
             server.daemon_threads = True
             url = f"http://127.0.0.1:{args.port}"
-            print("Otwórz:", url)
-            print("Zatrzymaj serwer: Ctrl+C. Historia: assistant_web_data/conversations.json")
+            print(tr("Otwórz:", "Open:"), url)
+            print(tr("Zatrzymaj serwer: Ctrl+C. Historia: assistant_web_data/conversations.json",
+                     "Stop the server: Ctrl+C. History: assistant_web_data/conversations.json"))
             if not args.no_browser:
                 threading.Timer(0.45, lambda: webbrowser.open(url)).start()
             try:
                 server.serve_forever(poll_interval=0.3)
             except KeyboardInterrupt:
-                print("\nZamykanie serwera...")
+                print(tr("\nZamykanie serwera...", "\nShutting down the server..."))
             finally:
                 server.server_close()
         finally:
             app.close()
     except OSError as exc:
-        print(f"BŁĄD: {exc}", file=sys.stderr)
+        print(tr(f"BŁĄD: {exc}", f"ERROR: {exc}"), file=sys.stderr)
         return 1
     finally:
         if mcp_context is not None:

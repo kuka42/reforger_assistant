@@ -238,13 +238,23 @@ a:hover, a:active {
     .path-actions button:hover { filter: brightness(1.1); }
     .path-banner { margin: 6px 11px; padding: 9px 11px; border-radius: 8px; background: #3a2a1c; color: #ffd9b8; font-size: 12px; line-height: 1.5; }
     .path-banner.bad { background: #3a1f1f; color: #ffc9c4; }
+    /* od 2.0.1: czwarta pigułka (język) - na węższych ekranach same wartości, bez etykiet i bez "LOCAL ONLY" */
+    @media (max-width: 1200px) {
+      .top-right { gap: 7px; }
+      .cfg-label, .pill, .top-subtitle { display: none; }
+      .cfg-pill { padding: 0 11px; gap: 5px; }
+    }
     @media (max-width: 700px) {
+      .top-left { flex: none; }
+      .top-left .top-title { display: none; }   /* od 2.0.1: na telefonie miejsce dla czterech pigułek */
       .top-right { gap: 6px; }
       .top-title { max-width: none; }
       .top-subtitle { display: none; }   /* model i kontekst są w pigułkach */
       .cfg-label { display: none; }
-      .cfg-pill { padding: 0 11px; gap: 5px; }
-      .cfg-value { max-width: 88px; }
+      .cfg-pill { padding: 0 8px; gap: 3px; font-size: 11px; }
+      .cfg-value { max-width: 64px; }
+      .topbar { padding: 0 8px; gap: 6px; }
+      .top-right { gap: 4px; }
       .cfg-wrap { position: static; }
       .cfg-menu { position: fixed; left: 12px; right: 12px; top: 62px; min-width: 0; max-width: none; }
     }
@@ -256,18 +266,18 @@ a:hover, a:active {
 <div id="app">
   <aside class="sidebar" id="sidebar">
     <div class="brand"><div class="brandmark">R</div><div><div class="brand-text">REFORGER ASSISTANT</div><div class="brand-sub">LOCAL OLLAMA · MCP BK</div></div></div>
-    <button class="side-primary" id="newChat"><span>Nowa rozmowa</span><span class="plus">+</span></button>
-    <div class="search-wrap"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m16 16 5 5"/></svg><input id="search" autocomplete="off" placeholder="Szukaj rozmów..." aria-label="Szukaj rozmów"></div>
-    <div class="side-label">Historia rozmów</div>
+    <button class="side-primary" id="newChat"><span data-i18n="newChat">Nowa rozmowa</span><span class="plus">+</span></button>
+    <div class="search-wrap"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m16 16 5 5"/></svg><input id="search" autocomplete="off" placeholder="Szukaj rozmów..." aria-label="Szukaj rozmów" data-i18n-ph="search" data-i18n-aria="searchAria"></div>
+    <div class="side-label" data-i18n="history">Historia rozmów</div>
     <div id="sessionList" class="session-list"></div>
-    <div class="side-footer"><div class="footer-row"><span class="status-dot"></span><span id="connectionText">Łączenie z MCP BK...</span></div><div class="small-note">Stan połączenia z serwerem MCP<br><br>v1.9.4 - <a href="https://github.com/kuka42" target="_new">KUKA</a></div></div>
+    <div class="side-footer"><div class="footer-row"><span class="status-dot"></span><span id="connectionText">Łączenie z MCP BK...</span></div><div class="small-note"><span data-i18n="connNote">Stan połączenia z serwerem MCP</span><br><br><span id="appVersion">v2.0.1</span> - <a href="https://github.com/kuka42" target="_new">KUKA</a></div></div>
   </aside>
   <main class="main">
-    <header class="topbar"><div class="top-left"><button class="icon-button only-mobile" id="toggleSidebar" aria-label="Pokaż historię">☰</button><div style="min-width:0"><div class="top-title" id="currentTitle">Nowa rozmowa</div><div class="top-subtitle" id="modelLine">GPT-OSS · Ollama</div></div></div><div class="top-right"><div class="cfg-wrap"><button type="button" class="cfg-pill" id="modelPill" aria-haspopup="listbox" aria-expanded="false" aria-controls="modelMenu" title="Wybierz model Ollamy"><span class="cfg-label">model</span><span class="cfg-value" id="modelValue">…</span><span class="cfg-caret" aria-hidden="true">▾</span></button><div class="cfg-menu" id="modelMenu" role="listbox" aria-label="Model Ollamy" hidden></div></div><div class="cfg-wrap"><button type="button" class="cfg-pill" id="ctxPill" aria-haspopup="listbox" aria-expanded="false" aria-controls="ctxMenu" title="Wybierz rozmiar kontekstu"><span class="cfg-label">kontekst</span><span class="cfg-value" id="ctxValue">…</span><span class="cfg-caret" aria-hidden="true">▾</span></button><div class="cfg-menu" id="ctxMenu" role="listbox" aria-label="Rozmiar kontekstu" hidden></div></div><div class="cfg-wrap"><button type="button" class="cfg-pill" id="pathsPill" aria-haspopup="dialog" aria-expanded="false" aria-controls="pathsMenu" title="Ścieżki do BK, gry i dokumentacji"><span class="cfg-label">ścieżki</span><span class="cfg-value" id="pathsValue">BK · AR</span><span class="cfg-caret" aria-hidden="true">▾</span></button><div class="cfg-menu wide" id="pathsMenu" role="dialog" aria-label="Ścieżki" hidden></div></div><span class="pill">● LOCAL ONLY</span><button class="icon-button only-mobile" id="toggleTools" aria-label="Pokaż aktywność MCP" title="Aktywność MCP">⚙</button></div></header>
+    <header class="topbar"><div class="top-left"><button class="icon-button only-mobile" id="toggleSidebar" aria-label="Pokaż historię" data-i18n-aria="showHistory">☰</button><div style="min-width:0"><div class="top-title" id="currentTitle">Nowa rozmowa</div><div class="top-subtitle" id="modelLine">GPT-OSS · Ollama</div></div></div><div class="top-right"><div class="cfg-wrap"><button type="button" class="cfg-pill" id="modelPill" aria-haspopup="listbox" aria-expanded="false" aria-controls="modelMenu" title="Wybierz model Ollamy" data-i18n-title="modelPillTitle"><span class="cfg-label">model</span><span class="cfg-value" id="modelValue">…</span><span class="cfg-caret" aria-hidden="true">▾</span></button><div class="cfg-menu" id="modelMenu" role="listbox" aria-label="Model Ollamy" data-i18n-aria="modelMenuAria" hidden></div></div><div class="cfg-wrap"><button type="button" class="cfg-pill" id="ctxPill" aria-haspopup="listbox" aria-expanded="false" aria-controls="ctxMenu" title="Wybierz rozmiar kontekstu" data-i18n-title="ctxPillTitle"><span class="cfg-label" data-i18n="ctxLabel">kontekst</span><span class="cfg-value" id="ctxValue">…</span><span class="cfg-caret" aria-hidden="true">▾</span></button><div class="cfg-menu" id="ctxMenu" role="listbox" aria-label="Rozmiar kontekstu" data-i18n-aria="ctxMenuAria" hidden></div></div><div class="cfg-wrap"><button type="button" class="cfg-pill" id="pathsPill" aria-haspopup="dialog" aria-expanded="false" aria-controls="pathsMenu" title="Ścieżki do BK, gry i dokumentacji" data-i18n-title="pathsPillTitle"><span class="cfg-label" data-i18n="pathsLabel">ścieżki</span><span class="cfg-value" id="pathsValue">BK · AR</span><span class="cfg-caret" aria-hidden="true">▾</span></button><div class="cfg-menu wide" id="pathsMenu" role="dialog" aria-label="Ścieżki" data-i18n-aria="pathsAria" hidden></div></div><div class="cfg-wrap"><button type="button" class="cfg-pill" id="langPill" aria-haspopup="listbox" aria-expanded="false" aria-controls="langMenu" title="Język interfejsu i asystenta" data-i18n-title="langPillTitle"><span class="cfg-label" data-i18n="langLabel">język</span><span class="cfg-value" id="langValue">PL</span><span class="cfg-caret" aria-hidden="true">▾</span></button><div class="cfg-menu" id="langMenu" role="listbox" aria-label="Język" data-i18n-aria="langMenuTitle" hidden></div></div><span class="pill">● LOCAL ONLY</span><button class="icon-button only-mobile" id="toggleTools" aria-label="Pokaż aktywność MCP" title="Aktywność MCP" data-i18n-aria="showTools" data-i18n-title="mcpActivity">⚙</button></div></header>
     <section class="chat-scroll" id="chatScroll"><div class="chat-inner" id="chatContent"></div></section>
-    <footer class="composer-area"><div class="composer"><textarea id="prompt" rows="2" placeholder="Zapytaj o skrypty, API albo mechaniki Arma Reforger..." aria-label="Wiadomość"></textarea><div class="composer-footer"><span class="composer-hint">Enter — wyślij · Shift+Enter — nowa linia</span><button class="send-button" id="send">Wyślij <span style="font-size:16px;line-height:12px">↗</span></button></div></div><div class="below-composer">Odpowiedzi modelu wymagają weryfikacji przed użyciem w modzie.</div></footer>
+    <footer class="composer-area"><div class="composer"><textarea id="prompt" rows="2" placeholder="Zapytaj o skrypty, API albo mechaniki Arma Reforger..." aria-label="Wiadomość" data-i18n-ph="prompt" data-i18n-aria="promptAria"></textarea><div class="composer-footer"><span class="composer-hint" data-i18n="hint">Enter — wyślij · Shift+Enter — nowa linia</span><button class="send-button" id="send"><span data-i18n="send">Wyślij</span> <span style="font-size:16px;line-height:12px">↗</span></button></div></div><div class="below-composer" data-i18n="verifyNote">Odpowiedzi modelu wymagają weryfikacji przed użyciem w modzie.</div></footer>
   </main>
-  <aside class="tools-panel" id="toolsPanel"><div class="right-top"><div class="right-title">Aktywność MCP</div><button class="icon-button only-mobile" id="closeTools" aria-label="Zamknij panel">✕</button></div><div class="right-sub">Podgląd faktycznych wywołań narzędzi</div><div class="panel-section">Ostatnie wywołania</div><div class="tool-list" id="toolList"></div><div class="right-footer"><div class="mode-tag">✓ Tylko odczyt</div><div id="toolCount">System używa 8 narzędzi Enfusion MCP BK</div><div>Wyniki kodu z MCP są używane w pamięci i nie są zapisywane do historii rozmów.</div></div></aside>
+  <aside class="tools-panel" id="toolsPanel"><div class="right-top"><div class="right-title" data-i18n="mcpActivity">Aktywność MCP</div><button class="icon-button only-mobile" id="closeTools" aria-label="Zamknij panel" data-i18n-aria="closePanel">✕</button></div><div class="right-sub" data-i18n="toolsSub">Podgląd faktycznych wywołań narzędzi</div><div class="panel-section" data-i18n="recentCalls">Ostatnie wywołania</div><div class="tool-list" id="toolList"></div><div class="right-footer"><div class="mode-tag" data-i18n="readOnly">✓ Tylko odczyt</div><div id="toolCount">System używa 8 narzędzi Enfusion MCP BK</div><div data-i18n="memNote">Wyniki kodu z MCP są używane w pamięci i nie są zapisywane do historii rozmów.</div></div></aside>
 </div>
 <div class="toast" id="toast" hidden></div>
 <script>
@@ -275,14 +285,114 @@ a:hover, a:active {
   'use strict';
   const $ = id => document.getElementById(id);
   const state = {sessions:[], current:null, detail:null, job:null, timer:null, busy:false, model:'gpt-oss:20b',
-    settings:{model:'', num_ctx:0, min_ctx:32768, max_ctx:262144, presets:[32768,49152,65536,98304,131072]}};
+    settings:{model:'', num_ctx:0, min_ctx:32768, max_ctx:262144, presets:[32768,49152,65536,98304,131072]},
+    conn:{status:'connecting',tools:0}, langInfo:{lang:'pl',ui_lang:'pl',lang_locked:false}};
   const esc = str => String(str ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  // ---- Język interfejsu (od 2.0.1): przełącza się od razu; silnik (odpowiedzi, kontrole, log) po ponownym uruchomieniu ----
+  const I18N={
+    pl:{newChat:'Nowa rozmowa',search:'Szukaj rozmów...',searchAria:'Szukaj rozmów',history:'Historia rozmów',connecting:'Łączenie z MCP BK...',
+      connNote:'Stan połączenia z serwerem MCP',showHistory:'Pokaż historię',modelPillTitle:'Wybierz model Ollamy',modelMenuAria:'Model Ollamy',
+      ctxLabel:'kontekst',ctxPillTitle:'Wybierz rozmiar kontekstu',ctxMenuAria:'Rozmiar kontekstu',pathsLabel:'ścieżki',
+      pathsPillTitle:'Ścieżki do BK, gry i dokumentacji',pathsAria:'Ścieżki',langLabel:'język',langPillTitle:'Język interfejsu i asystenta',
+      showTools:'Pokaż aktywność MCP',mcpActivity:'Aktywność MCP',prompt:'Zapytaj o skrypty, API albo mechaniki Arma Reforger...',
+      promptAria:'Wiadomość',hint:'Enter — wyślij · Shift+Enter — nowa linia',send:'Wyślij',
+      verifyNote:'Odpowiedzi modelu wymagają weryfikacji przed użyciem w modzie.',closePanel:'Zamknij panel',
+      toolsSub:'Podgląd faktycznych wywołań narzędzi',recentCalls:'Ostatnie wywołania',readOnly:'✓ Tylko odczyt',
+      toolsCount:'System używa {n} narzędzi Enfusion MCP BK',memNote:'Wyniki kodu z MCP są używane w pamięci i nie są zapisywane do historii rozmów.',
+      badResponse:'Nieprawidłowa odpowiedź serwera.',code:'kod',copy:'Kopiuj',modelTitle:'Model: {m} (kliknij, aby zmienić)',
+      ctxTitle:'Kontekst: {c} (kliknij, aby zmienić)',tokens:'tokenów',nextQuestion:' Obowiązuje od następnego pytania.',
+      modelMenuTitle:'Model Ollamy',loadingModels:'Ładowanie listy modeli…',ollamaDown:'Ollama nie odpowiada.',notInOllama:'nie znaleziono w Ollamie',
+      noModels:'Brak zainstalowanych modeli. Pobierz model poleceniem: ollama pull <nazwa>',noTools:'bez narzędzi',
+      modelNote:'Asystent wymaga modelu z obsługą narzędzi. Był dostrajany i testowany na gpt-oss:20b; inne modele mogą działać inaczej. Zmiana obowiązuje od następnego pytania.',
+      ctxMenuTitle:'Rozmiar kontekstu',customValue:'(własna wartość)',minimum:'minimum',
+      ctxNote:'Większy kontekst zwiększa zużycie pamięci GPU i czas ładowania modelu; gdy model przestanie mieścić się w VRAM, odpowiedzi zwolnią. Limity wyników narzędzi są dobrane do 32 768 tokenów, więc to minimum.',
+      custom:'Własna:',set:'Ustaw',ctxRange:'Podaj liczbę całkowitą od {a} do {b}.',modelSet:'Model: {m}.',ctxSet:'Kontekst: {c}.',
+      pathsTitle:'Ścieżki',loading:'Ładowanie…',
+      setupBanner:'Tryb konfiguracji: BK się nie uruchomił ({e}). Popraw ścieżki, zapisz i uruchom asystenta ponownie.',unknownError:'nieznany błąd',
+      restartBanner:'Zapisane ścieżki zadziałają po ponownym uruchomieniu asystenta (zamknij okno serwera albo Ctrl+C i uruchom go jeszcze raz).',
+      docsPh:'puste = obok gry: {p}',pathPh:'wklej pełną ścieżkę',nowUsed:'Teraz używana: {a} ({s})',
+      lockedVar:'; zmienna {env} ma pierwszeństwo, zmień ją w pliku uruchomieniowym',
+      savedRestart:'Zapisano. Uruchom asystenta ponownie, żeby użyć nowych ścieżek.',savedNoChange:'Zapisano (bez zmian w używanych ścieżkach).',
+      check:'Sprawdź',save:'Zapisz',
+      pathsNote:'Ścieżkę skopiujesz z paska adresu Eksploratora Windows. Asystent tylko sprawdza, czy wskazane pliki istnieją; model nie dostaje przez to żadnego dostępu.',
+      deleteConfirm:'Usunąć rozmowę „{t}”?',noTraces:'Gdy model zacznie używać MCP, zobaczysz tutaj nazwy narzędzi, parametry i czas wykonania.',
+      running:'W toku…',errorDot:'Błąd · ',doneDot:'Wykonano · ',args:'Argumenty',welcomeH1:'Co dziś tworzymy w Reforgerze?',
+      welcomeP:'Twój lokalny asystent z dostępem do prawdziwego API i skryptów gry przez Enfusion MCP BK. Napisana w Pythonie aplikacja integruje modele {ollama} z serwerem MCP, oferując przy tym intuicyjny interfejs GUI.',
+      sug:[['Zużycie paliwa','Sprawdź mechanikę pojazdów w kodzie gry','Znajdź skrypty odpowiedzialne za zużycie paliwa w pojazdach i wyjaśnij ich działanie.'],
+        ['System obrażeń','Wyszukaj komponenty i powiązane API','Znajdź mechanizm zadawania obrażeń pojazdom. Pokaż rzeczywiste klasy i skrypty.'],
+        ['GameMode','Zrozum zdarzenia i cykl życia trybu','Wyjaśnij, jak w Arma Reforger działają zdarzenia GameMode, na podstawie rzeczywistego kodu.'],
+        ['Ekwipunek','Odkryj istniejące komponenty i metody','Znajdź skrypty związane z ekwipunkiem gracza i wskaż najważniejsze klasy.']],
+      copyAnswer:'Kopiuj odpowiedź',analyzing:'Analizuję źródła...',copied:'Skopiowano do schowka',copyFail:'Nie udało się skopiować',
+      finishFirst:'Zakończ bieżące pytanie, zanim zmienisz rozmowę.',errorPrefix:'Błąd: ',waitingModel:'Oczekuję na model…',
+      modelAnalyzing:'Model analizuje pytanie…',modelError:'Błąd modelu: ',connProblem:'Problem z połączeniem: ',
+      setupConn:'Tryb konfiguracji: BK nie działa',setupTools:'Ustaw ścieżki (przycisk „ścieżki” u góry) i uruchom asystenta ponownie',
+      connected:'MCP BK połączony',noConn:'Brak połączenia!',noServer:'Nie udało się połączyć z lokalnym serwerem: ',
+      startServer:'Uruchom python reforger_assistant_WEB.py',langMenuTitle:'Język',
+      langNote:'Interfejs zmienia język od razu. Asystent (odpowiedzi, kontrole, log) przełączy się po ponownym uruchomieniu.',
+      langRestart:'Asystent nadal działa po {cur}. Uruchom go ponownie (zamknij okno serwera albo Ctrl+C), żeby odpowiadał po {new}.',
+      langLocked:'Język ustawia zmienna REFORGER_LANG w pliku uruchomieniowym; zmień ją tam.',langIn_pl:'polsku',langIn_en:'angielsku',
+      langSaved:'Zapisano język interfejsu.',langActive:'aktywny w asystencie',langAfterRestart:'po ponownym uruchomieniu'},
+    en:{newChat:'New conversation',search:'Search conversations...',searchAria:'Search conversations',history:'Conversation history',
+      connecting:'Connecting to MCP BK...',connNote:'MCP server connection status',showHistory:'Show history',modelPillTitle:'Choose the Ollama model',
+      modelMenuAria:'Ollama model',ctxLabel:'context',ctxPillTitle:'Choose the context size',ctxMenuAria:'Context size',pathsLabel:'paths',
+      pathsPillTitle:'Paths to BK, the game and the documentation',pathsAria:'Paths',langLabel:'language',langPillTitle:'Interface and assistant language',
+      showTools:'Show MCP activity',mcpActivity:'MCP activity',prompt:'Ask about Arma Reforger scripts, API or mechanics...',
+      promptAria:'Message',hint:'Enter — send · Shift+Enter — new line',send:'Send',
+      verifyNote:'Model answers need verification before you use them in a mod.',closePanel:'Close panel',
+      toolsSub:'Preview of the actual tool calls',recentCalls:'Recent calls',readOnly:'✓ Read-only',
+      toolsCount:'The system uses {n} Enfusion MCP BK tools',memNote:'Code results from MCP are used in memory and are not saved to the conversation history.',
+      badResponse:'Invalid server response.',code:'code',copy:'Copy',modelTitle:'Model: {m} (click to change)',
+      ctxTitle:'Context: {c} (click to change)',tokens:'tokens',nextQuestion:' Applies from the next question.',
+      modelMenuTitle:'Ollama model',loadingModels:'Loading the model list…',ollamaDown:'Ollama is not responding.',notInOllama:'not found in Ollama',
+      noModels:'No models installed. Download a model with: ollama pull <name>',noTools:'no tools',
+      modelNote:'The assistant needs a model with tool support. It was tuned and tested on gpt-oss:20b; other models may behave differently. The change applies from the next question.',
+      ctxMenuTitle:'Context size',customValue:'(custom value)',minimum:'minimum',
+      ctxNote:'A larger context increases GPU memory use and model loading time; once the model no longer fits in VRAM, answers slow down. Tool result limits are tuned for 32,768 tokens, so that is the minimum.',
+      custom:'Custom:',set:'Set',ctxRange:'Enter an integer from {a} to {b}.',modelSet:'Model: {m}.',ctxSet:'Context: {c}.',
+      pathsTitle:'Paths',loading:'Loading…',
+      setupBanner:'Setup mode: BK did not start ({e}). Fix the paths, save and restart the assistant.',unknownError:'unknown error',
+      restartBanner:'The saved paths take effect after restarting the assistant (close the server window or press Ctrl+C and start it again).',
+      docsPh:'empty = next to the game: {p}',pathPh:'paste the full path',nowUsed:'In use now: {a} ({s})',
+      lockedVar:'; the {env} variable takes precedence, change it in the launcher',
+      savedRestart:'Saved. Restart the assistant to use the new paths.',savedNoChange:'Saved (no change in the paths in use).',
+      check:'Check',save:'Save',
+      pathsNote:'Copy the path from the Windows Explorer address bar. The assistant only checks whether the files exist; the model gets no access through this.',
+      deleteConfirm:'Delete the conversation "{t}"?',noTraces:'When the model starts using MCP, you will see tool names, parameters and run times here.',
+      running:'Running…',errorDot:'Error · ',doneDot:'Done · ',args:'Arguments',welcomeH1:'What are we building in Reforger today?',
+      welcomeP:'Your local assistant with access to the real game API and scripts through Enfusion MCP BK. The Python app connects {ollama} models to the MCP server and gives you an easy-to-use GUI.',
+      sug:[['Fuel consumption','Check vehicle mechanics in the game code','Find the scripts responsible for fuel consumption in vehicles and explain how they work.'],
+        ['Damage system','Find components and the related API','Find the mechanism that deals damage to vehicles. Show the real classes and scripts.'],
+        ['GameMode','Understand the events and lifecycle of the mode','Explain how GameMode events work in Arma Reforger, based on the real code.'],
+        ['Inventory','Discover existing components and methods','Find the scripts related to the player inventory and point out the most important classes.']],
+      copyAnswer:'Copy answer',analyzing:'Analysing sources...',copied:'Copied to the clipboard',copyFail:'Could not copy',
+      finishFirst:'Finish the current question before switching conversations.',errorPrefix:'Error: ',waitingModel:'Waiting for the model…',
+      modelAnalyzing:'The model is analysing the question…',modelError:'Model error: ',connProblem:'Connection problem: ',
+      setupConn:'Setup mode: BK is not running',setupTools:'Set the paths (the "paths" button at the top) and restart the assistant',
+      connected:'MCP BK connected',noConn:'No connection!',noServer:'Could not connect to the local server: ',
+      startServer:'Start python reforger_assistant_WEB.py',langMenuTitle:'Language',
+      langNote:'The interface switches immediately. The assistant (answers, checks, log) switches after a restart.',
+      langRestart:'The assistant still runs in {cur}. Restart it (close the server window or press Ctrl+C) so that it answers in {new}.',
+      langLocked:'The language is set by the REFORGER_LANG variable in the launcher; change it there.',langIn_pl:'Polish',langIn_en:'English',
+      langSaved:'Interface language saved.',langActive:'active in the assistant',langAfterRestart:'after a restart'}
+  };
+  const DEFAULT_TITLES=['Nowa rozmowa','New conversation'];
+  let LANG=(()=>{try{const v=localStorage.getItem('reforger-ui-lang');return v==='en'?'en':'pl';}catch{return 'pl';}})();
+  const t=(key,vars)=>{let s=I18N[LANG][key]??I18N.pl[key]??key;if(vars&&typeof s==='string')for(const [k,v] of Object.entries(vars))s=s.split('{'+k+'}').join(String(v));return s;};
+  const titleOf=title=>DEFAULT_TITLES.includes(title)?t('newChat'):title;
+  function applyStatic(){
+    document.documentElement.lang=LANG;
+    document.querySelectorAll('[data-i18n]').forEach(e=>{e.textContent=t(e.dataset.i18n);});
+    document.querySelectorAll('[data-i18n-ph]').forEach(e=>{e.placeholder=t(e.dataset.i18nPh);});
+    document.querySelectorAll('[data-i18n-title]').forEach(e=>{e.title=t(e.dataset.i18nTitle);});
+    document.querySelectorAll('[data-i18n-aria]').forEach(e=>{e.setAttribute('aria-label',t(e.dataset.i18nAria));});
+    $('langValue').textContent=LANG.toUpperCase();
+  }
   function notify(text) { const el=$('toast'); el.textContent=text;el.hidden=false;clearTimeout(notify.timer);notify.timer=setTimeout(()=>el.hidden=true,3200); }
   async function api(path, method='GET', data=null) {
     const opt={method,headers:{}};
     if(method!=='GET'){opt.headers['Content-Type']='application/json';opt.headers['X-Assistant-UI']='1';opt.body=JSON.stringify(data ?? {});}
     const response=await fetch(path,opt); let result;
-    try{result=await response.json();}catch{throw new Error('Nieprawidłowa odpowiedź serwera.');}
+    try{result=await response.json();}catch{throw new Error(t('badResponse'));}
     if(!response.ok)throw new Error(result.error || `HTTP ${response.status}`);
     return result;
   }
@@ -332,9 +442,9 @@ a:hover, a:active {
     const pieces=String(src||'').split(/(```[^\n]*\n[\s\S]*?```)/g);
     return pieces.map(piece=>{
       if(piece.startsWith('```') && piece.endsWith('```')){
-        const split=piece.indexOf('\n');const lang=piece.slice(3,split).trim().slice(0,20)||'kod';
+        const split=piece.indexOf('\n');const lang=piece.slice(3,split).trim().slice(0,20)||t('code');
         const code=piece.slice(split+1,-3).replace(/\n$/,'');
-        return `<div class="code-wrap"><div class="code-head"><span>${esc(lang)}</span><button type="button" class="copy-code">Kopiuj</button></div><pre><code>${esc(code)}</code></pre></div>`;
+        return `<div class="code-wrap"><div class="code-head"><span>${esc(lang)}</span><button type="button" class="copy-code">${esc(t('copy'))}</button></div><pre><code>${esc(code)}</code></pre></div>`;
       }
       const lines=piece.split('\n');let out='',i=0;
       while(i<lines.length){let l=lines[i];if(!l.trim()){i++;continue;}
@@ -359,11 +469,11 @@ a:hover, a:active {
   // ---- Wybór modelu i kontekstu (górny pasek) ----
   const fmtCtx=n=>{const k=n/1024;return (Number.isInteger(k)?k:Math.round(k))+'k';};
   const fmtNum=n=>String(n).replace(/\B(?=(\d{3})+(?!\d))/g,'\u00a0');
-  const MENUS={model:{pill:'modelPill',menu:'modelMenu'},ctx:{pill:'ctxPill',menu:'ctxMenu'},paths:{pill:'pathsPill',menu:'pathsMenu'}};
+  const MENUS={model:{pill:'modelPill',menu:'modelMenu'},ctx:{pill:'ctxPill',menu:'ctxMenu'},paths:{pill:'pathsPill',menu:'pathsMenu'},lang:{pill:'langPill',menu:'langMenu'}};
   function renderSettings(){
     const st=state.settings;
-    $('modelValue').textContent=st.model||'…';$('modelPill').title='Model: '+(st.model||'?')+' (kliknij, aby zmienić)';
-    $('ctxValue').textContent=st.num_ctx?fmtCtx(st.num_ctx):'…';$('ctxPill').title='Kontekst: '+(st.num_ctx?fmtNum(st.num_ctx)+' tokenów':'?')+' (kliknij, aby zmienić)';
+    $('modelValue').textContent=st.model||'…';$('modelPill').title=t('modelTitle',{m:st.model||'?'});
+    $('ctxValue').textContent=st.num_ctx?fmtCtx(st.num_ctx):'…';$('ctxPill').title=t('ctxTitle',{c:st.num_ctx?fmtNum(st.num_ctx)+' '+t('tokens'):'?'});
     $('modelLine').textContent=(st.model||state.model)+(st.num_ctx?' · '+fmtCtx(st.num_ctx):'')+' · Ollama · MCP BK';
   }
   const el=(tag,cls,text)=>{const e=document.createElement(tag);if(cls)e.className=cls;if(text!==undefined)e.textContent=text;return e;};
@@ -377,13 +487,13 @@ a:hover, a:active {
     const m=$(MENUS[which].menu),p=$(MENUS[which].pill),wasOpen=!m.hidden;
     closeMenus(false);if(wasOpen)return;
     m.hidden=false;p.setAttribute('aria-expanded','true');
-    if(which==='model')buildModelMenu();else if(which==='paths')buildPathsMenu();else buildCtxMenu();
+    if(which==='model')buildModelMenu();else if(which==='paths')buildPathsMenu();else if(which==='lang')buildLangMenu();else buildCtxMenu();
   }
   async function applySettings(patch,label){
     try{
       const result=await api('/api/settings','POST',patch);
       state.settings={...state.settings,...result};renderSettings();closeMenus(true);
-      notify(label+(state.busy?' Obowiązuje od następnego pytania.':''));
+      notify(label+(state.busy?t('nextQuestion'):''));
     }catch(err){notify(err.message);}
   }
   function optionButton(main,meta,selected,disabled,onClick,warn){
@@ -392,35 +502,35 @@ a:hover, a:active {
     if(onClick)b.addEventListener('click',onClick);return b;
   }
   async function buildModelMenu(){
-    const root=$('modelMenu');root.replaceChildren(el('div','cfg-title','Model Ollamy'),el('div','cfg-note','Ładowanie listy modeli…'));
+    const root=$('modelMenu');root.replaceChildren(el('div','cfg-title',t('modelMenuTitle')),el('div','cfg-note',t('loadingModels')));
     let data;try{data=await api('/api/models');}catch(err){data={ok:false,error:err.message,models:[]};}
     if(root.hidden)return;
-    root.replaceChildren(el('div','cfg-title','Model Ollamy'));
-    if(!data.ok){root.append(el('div','cfg-note',data.error||'Ollama nie odpowiada.'));return;}
+    root.replaceChildren(el('div','cfg-title',t('modelMenuTitle')));
+    if(!data.ok){root.append(el('div','cfg-note',data.error||t('ollamaDown')));return;}
     const current=state.settings.model,names=data.models.map(m=>m.name);
-    if(current&&!names.includes(current))root.append(optionButton(current,'nie znaleziono w Ollamie',true,true,null,true));
-    if(!data.models.length)root.append(el('div','cfg-note','Brak zainstalowanych modeli. Pobierz model poleceniem: ollama pull <nazwa>'));
+    if(current&&!names.includes(current))root.append(optionButton(current,t('notInOllama'),true,true,null,true));
+    if(!data.models.length)root.append(el('div','cfg-note',t('noModels')));
     for(const m of data.models){
-      const meta=[m.params,m.size_gb?m.size_gb+' GB':'',m.tools===false?'bez narzędzi':''].filter(Boolean).join(' · ');
-      root.append(optionButton(m.name,meta,m.name===current,m.tools===false,()=>applySettings({model:m.name},'Model: '+m.name+'.'),m.tools===false));
+      const meta=[m.params,m.size_gb?m.size_gb+' GB':'',m.tools===false?t('noTools'):''].filter(Boolean).join(' · ');
+      root.append(optionButton(m.name,meta,m.name===current,m.tools===false,()=>applySettings({model:m.name},t('modelSet',{m:m.name})),m.tools===false));
     }
-    root.append(el('div','cfg-note','Asystent wymaga modelu z obsługą narzędzi. Był dostrajany i testowany na gpt-oss:20b; inne modele mogą działać inaczej. Zmiana obowiązuje od następnego pytania.'));
+    root.append(el('div','cfg-note',t('modelNote')));
     focusSelected(root);
   }
   function buildCtxMenu(){
-    const root=$('ctxMenu'),st=state.settings;root.replaceChildren(el('div','cfg-title','Rozmiar kontekstu'));
+    const root=$('ctxMenu'),st=state.settings;root.replaceChildren(el('div','cfg-title',t('ctxMenuTitle')));
     const presets=st.presets||[];
-    if(st.num_ctx&&!presets.includes(st.num_ctx))root.append(optionButton(fmtCtx(st.num_ctx),fmtNum(st.num_ctx)+' tokenów (własna wartość)',true,true));
+    if(st.num_ctx&&!presets.includes(st.num_ctx))root.append(optionButton(fmtCtx(st.num_ctx),fmtNum(st.num_ctx)+' '+t('tokens')+' '+t('customValue'),true,true));
     for(const n of presets){
-      root.append(optionButton(fmtCtx(n),fmtNum(n)+' tokenów'+(n===st.min_ctx?' · minimum':''),n===st.num_ctx,false,()=>applySettings({num_ctx:n},'Kontekst: '+fmtCtx(n)+'.')));
+      root.append(optionButton(fmtCtx(n),fmtNum(n)+' '+t('tokens')+(n===st.min_ctx?' · '+t('minimum'):''),n===st.num_ctx,false,()=>applySettings({num_ctx:n},t('ctxSet',{c:fmtCtx(n)}))));
     }
-    root.append(el('div','cfg-note','Większy kontekst zwiększa zużycie pamięci GPU i czas ładowania modelu; gdy model przestanie mieścić się w VRAM, odpowiedzi zwolnią. Limity wyników narzędzi są dobrane do 32 768 tokenów, więc to minimum.'));
-    const row=el('div','cfg-custom'),label=el('label',null,'Własna:'),input=document.createElement('input'),go=el('button',null,'Ustaw');
+    root.append(el('div','cfg-note',t('ctxNote')));
+    const row=el('div','cfg-custom'),label=el('label',null,t('custom')),input=document.createElement('input'),go=el('button',null,t('set'));
     label.htmlFor='ctxCustom';input.id='ctxCustom';input.type='number';input.min=st.min_ctx;input.max=st.max_ctx;input.step=1024;input.value=st.num_ctx||st.min_ctx;go.type='button';
     const error=el('div','cfg-error');error.hidden=true;
     const submit=()=>{const n=Number(input.value);
-      if(!Number.isInteger(n)||n<st.min_ctx||n>st.max_ctx){error.textContent='Podaj liczbę całkowitą od '+fmtNum(st.min_ctx)+' do '+fmtNum(st.max_ctx)+'.';error.hidden=false;input.focus();return;}
-      error.hidden=true;applySettings({num_ctx:n},'Kontekst: '+fmtCtx(n)+'.');};
+      if(!Number.isInteger(n)||n<st.min_ctx||n>st.max_ctx){error.textContent=t('ctxRange',{a:fmtNum(st.min_ctx),b:fmtNum(st.max_ctx)});error.hidden=false;input.focus();return;}
+      error.hidden=true;applySettings({num_ctx:n},t('ctxSet',{c:fmtCtx(n)}));};
     go.addEventListener('click',submit);input.addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();submit();}});
     row.append(label,input,go);root.append(row,error);
     focusSelected(root);
@@ -429,22 +539,22 @@ a:hover, a:active {
   const PATH_KEYS=['mcp_script','game_path','docs_path'];
   function pathStatus(node,check,optional){node.textContent=(check.ok?'✓ ':optional?'! ':'✗ ')+check.message;node.className='path-status '+(check.ok?'ok':optional?'warn':'bad');}
   async function buildPathsMenu(){
-    const root=$('pathsMenu');root.replaceChildren(el('div','cfg-title','Ścieżki'),el('div','cfg-note','Ładowanie…'));
-    let data;try{data=await api('/api/paths');}catch(err){root.replaceChildren(el('div','cfg-title','Ścieżki'),el('div','cfg-error',err.message));return;}
+    const root=$('pathsMenu');root.replaceChildren(el('div','cfg-title',t('pathsTitle')),el('div','cfg-note',t('loading')));
+    let data;try{data=await api('/api/paths');}catch(err){root.replaceChildren(el('div','cfg-title',t('pathsTitle')),el('div','cfg-error',err.message));return;}
     if(root.hidden)return;
-    root.replaceChildren(el('div','cfg-title','Ścieżki'));
-    if(data.setup_mode)root.append(el('div','path-banner bad','Tryb konfiguracji: BK się nie uruchomił ('+(data.setup_error||'nieznany błąd')+'). Popraw ścieżki, zapisz i uruchom asystenta ponownie.'));
-    const banner=el('div','path-banner','Zapisane ścieżki zadziałają po ponownym uruchomieniu asystenta (zamknij okno serwera albo Ctrl+C i uruchom go jeszcze raz).');banner.hidden=!data.restart_needed;root.append(banner);
+    root.replaceChildren(el('div','cfg-title',t('pathsTitle')));
+    if(data.setup_mode)root.append(el('div','path-banner bad',t('setupBanner',{e:data.setup_error||t('unknownError')})));
+    const banner=el('div','path-banner',t('restartBanner'));banner.hidden=!data.restart_needed;root.append(banner);
     const inputs={},statuses={};
     for(const key of PATH_KEYS){
       const f=data.fields[key],box=el('div','path-field'),input=document.createElement('input');
       input.type='text';input.spellcheck=false;input.autocomplete='off';input.id='path_'+key;
       input.value=f.locked?f.active:(f.saved||(f.source==='default'||f.source==='auto'?'':f.active));
-      if(key==='docs_path')input.placeholder='puste = obok gry: '+(f.source==='auto'?f.active:'Arma Reforger Tools\\Workbench\\docs');
-      else input.placeholder='wklej pełną ścieżkę';
+      if(key==='docs_path')input.placeholder=t('docsPh',{p:f.source==='auto'?f.active:'Arma Reforger Tools\\Workbench\\docs'});
+      else input.placeholder=t('pathPh');
       input.disabled=!!f.locked;
       const label=el('label','path-label',f.label);label.htmlFor=input.id;
-      const now=el('div','path-now','Teraz używana: '+(f.active||'—')+' ('+f.source_label+(f.locked?'; zmienna '+f.env+' ma pierwszeństwo, zmień ją w pliku uruchomieniowym':'')+')');
+      const now=el('div','path-now',t('nowUsed',{a:f.active||'—',s:f.source_label+(f.locked?t('lockedVar',{env:f.env}):'')}));
       const st=el('div','path-status');st.hidden=true;
       box.append(label,input,now,st);root.append(box);inputs[key]=input;statuses[key]=st;
       input.addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();check();}});
@@ -453,11 +563,38 @@ a:hover, a:active {
     const show=checks=>{for(const k of PATH_KEYS){if(inputs[k].disabled){statuses[k].hidden=true;continue;}pathStatus(statuses[k],checks[k],k==='docs_path');statuses[k].hidden=false;}};
     async function check(){try{const r=await api('/api/paths/check','POST',values());show(r.checks);}catch(err){notify(err.message);}}
     async function save(){try{const r=await api('/api/paths','POST',values());show(r.checks);banner.hidden=!r.restart_needed;
-      notify(r.restart_needed?'Zapisano. Uruchom asystenta ponownie, żeby użyć nowych ścieżek.':'Zapisano (bez zmian w używanych ścieżkach).');}catch(err){notify(err.message);}}
-    const actions=el('div','path-actions'),b1=el('button',null,'Sprawdź'),b2=el('button','primary','Zapisz');b1.type=b2.type='button';
+      notify(r.restart_needed?t('savedRestart'):t('savedNoChange'));}catch(err){notify(err.message);}}
+    const actions=el('div','path-actions'),b1=el('button',null,t('check')),b2=el('button','primary',t('save'));b1.type=b2.type='button';
     b1.addEventListener('click',check);b2.addEventListener('click',save);actions.append(b1,b2);root.append(actions);
-    root.append(el('div','cfg-note','Ścieżkę skopiujesz z paska adresu Eksploratora Windows. Asystent tylko sprawdza, czy wskazane pliki istnieją; model nie dostaje przez to żadnego dostępu.'));
+    root.append(el('div','cfg-note',t('pathsNote')));
     (PATH_KEYS.map(k=>inputs[k]).find(i=>!i.disabled)||b1).focus();
+  }
+  // ---- Język (od 2.0.1): interfejs od razu, silnik po ponownym uruchomieniu ----
+  function buildLangMenu(){
+    const root=$('langMenu'),li=state.langInfo;root.replaceChildren(el('div','cfg-title',t('langMenuTitle')));
+    for(const [code,name] of [['pl','Polski'],['en','English']]){
+      const meta=code===li.lang?t('langActive'):(code===LANG?t('langAfterRestart'):'');
+      root.append(optionButton(name,meta,code===LANG,li.lang_locked&&code!==LANG,()=>setLang(code)));
+    }
+    root.append(el('div','cfg-note',li.lang_locked?t('langLocked'):t('langNote')));
+    if(!li.lang_locked&&LANG!==li.lang)root.append(el('div','path-banner',t('langRestart',{cur:t('langIn_'+li.lang),new:t('langIn_'+LANG)})));
+    focusSelected(root);
+  }
+  function switchUi(code){
+    LANG=code==='en'?'en':'pl';try{localStorage.setItem('reforger-ui-lang',LANG);}catch{}
+    applyStatic();renderSettings();renderConnection();buildSessionList();renderChat();renderTools();
+  }
+  async function setLang(code){
+    if(code===LANG){closeMenus(true);return;}
+    try{const r=await api('/api/lang','POST',{lang:code});state.langInfo={...state.langInfo,...r};switchUi(code);closeMenus(true);
+      notify(r.lang_restart_needed?t('langRestart',{cur:t('langIn_'+r.lang),new:t('langIn_'+code)}):t('langSaved'));}catch(err){notify(err.message);}
+  }
+  function renderConnection(){
+    const c=state.conn,dot=document.querySelector('.status-dot');
+    if(c.status==='setup'){$('connectionText').textContent=t('setupConn');if(dot)dot.style.background='#e5534b';$('toolCount').textContent=t('setupTools');}
+    else if(c.status==='connected'){$('connectionText').textContent=t('connected');$('toolCount').textContent=t('toolsCount',{n:c.tools});}
+    else if(c.status==='offline'){$('connectionText').textContent=t('noConn');}
+    else{$('connectionText').textContent=t('connecting');}
   }
   function menuKeydown(e){
     const root=e.currentTarget;
@@ -474,75 +611,81 @@ a:hover, a:active {
     const root=$('sessionList');root.replaceChildren();const needle=$('search').value.toLowerCase().trim();
     for(const s of state.sessions.filter(s=>s.title.toLowerCase().includes(needle))){
       const row=document.createElement('div');row.className='session'+(s.id===state.current?' selected':'');
-      row.appendChild(makeButton('session-title',s.title,()=>selectSession(s.id)));
-      row.appendChild(makeButton('session-delete','×',async e=>{if(!confirm(`Usunąć rozmowę „${s.title}”?`))return;try{await api('/api/sessions/'+s.id+'/delete','POST');await refreshSessions();if(state.current===s.id){state.current=null;state.detail=null; if(state.sessions.length)await selectSession(state.sessions[0].id);else await newChat();}}catch(err){notify(err.message);}}));
+      row.appendChild(makeButton('session-title',titleOf(s.title),()=>selectSession(s.id)));
+      row.appendChild(makeButton('session-delete','×',async e=>{if(!confirm(t('deleteConfirm',{t:titleOf(s.title)})))return;try{await api('/api/sessions/'+s.id+'/delete','POST');await refreshSessions();if(state.current===s.id){state.current=null;state.detail=null; if(state.sessions.length)await selectSession(state.sessions[0].id);else await newChat();}}catch(err){notify(err.message);}}));
       root.appendChild(row);
     }
   }
   function renderTools(){
     const root=$('toolList');root.replaceChildren();const traces=state.detail?.traces||[];
-    if(!traces.length){const empty=document.createElement('div');empty.className='no-traces';empty.textContent='Gdy model zacznie używać MCP, zobaczysz tutaj nazwy narzędzi, parametry i czas wykonania.';root.appendChild(empty);return;}
+    if(!traces.length){const empty=document.createElement('div');empty.className='no-traces';empty.textContent=t('noTraces');root.appendChild(empty);return;}
     for(const ev of [...traces].reverse()){
       const row=document.createElement('div');row.className='tool-row '+ev.status;
       const name=document.createElement('div');name.className='tool-name';name.textContent=ev.name||'?';
       const desc=document.createElement('div');desc.className='tool-desc';desc.textContent=ev.arguments?.query||ev.arguments?.path||'';
-      const meta=document.createElement('div');meta.className='tool-meta';meta.textContent=ev.status==='running'?'W toku…':(ev.status==='error'?'Błąd · ':'Wykonano · ')+(ev.duration_ms??'–')+' ms';
+      const meta=document.createElement('div');meta.className='tool-meta';meta.textContent=ev.status==='running'?t('running'):(ev.status==='error'?t('errorDot'):t('doneDot'))+(ev.duration_ms??'–')+' ms';
       row.append(name,desc,meta);
-      const detail=document.createElement('details');const summary=document.createElement('summary');summary.style.cssText='font-size:10px;color:#f0a35a;cursor:pointer;margin-top:6px';summary.textContent='Argumenty';
+      const detail=document.createElement('details');const summary=document.createElement('summary');summary.style.cssText='font-size:10px;color:#f0a35a;cursor:pointer;margin-top:6px';summary.textContent=t('args');
       const pre=document.createElement('pre');pre.className='tool-args';pre.textContent=JSON.stringify(ev.arguments||{},null,2);
       detail.append(summary,pre);row.append(detail);root.appendChild(row);
     }
   }
   function renderChat(){
     const root=$('chatContent');root.replaceChildren();const turns=state.detail?.turns||[];
-    $('currentTitle').textContent=state.detail?.title||'Nowa rozmowa';
-    if(!turns.length){const welcome=document.createElement('section');welcome.className='welcome';welcome.innerHTML=`<div class="welcome-symbol">R</div><h1>Co dziś tworzymy w Reforgerze?</h1><p>Twój lokalny asystent z dostępem do prawdziwego API i skryptów gry przez Enfusion MCP BK. Napisana w Pythonie aplikacja integruje modele <a href="https://ollama.com" target="_new">Ollama</a> z serwerem MCP, oferując przy tym intuicyjny interfejs GUI.</p><div class="suggestions"><button class="suggestion" data-example="Znajdź skrypty odpowiedzialne za zużycie paliwa w pojazdach i wyjaśnij ich działanie."><strong>Zużycie paliwa</strong><span>Sprawdź mechanikę pojazdów w kodzie gry</span></button><button class="suggestion" data-example="Znajdź mechanizm zadawania obrażeń pojazdom. Pokaż rzeczywiste klasy i skrypty."><strong>System obrażeń</strong><span>Wyszukaj komponenty i powiązane API</span></button><button class="suggestion" data-example="Wyjaśnij, jak w Arma Reforger działają zdarzenia GameMode, na podstawie rzeczywistego kodu."><strong>GameMode</strong><span>Zrozum zdarzenia i cykl życia trybu</span></button><button class="suggestion" data-example="Znajdź skrypty związane z ekwipunkiem gracza i wskaż najważniejsze klasy."><strong>Ekwipunek</strong><span>Odkryj istniejące komponenty i metody</span></button></div>`;
+    $('currentTitle').textContent=titleOf(state.detail?.title||'Nowa rozmowa');
+    if(!turns.length){const welcome=document.createElement('section');welcome.className='welcome';welcome.innerHTML=`<div class="welcome-symbol">R</div><h1>${esc(t('welcomeH1'))}</h1><p>${esc(t('welcomeP')).replace('{ollama}','<a href="https://ollama.com" target="_new">Ollama</a>')}</p><div class="suggestions">`+t('sug').map(([title,sub,q])=>`<button class="suggestion" data-example="${esc(q)}"><strong>${esc(title)}</strong><span>${esc(sub)}</span></button>`).join('')+`</div>`;
       welcome.querySelectorAll('[data-example]').forEach(b=>b.addEventListener('click',()=>{$('prompt').value=b.dataset.example;autoGrow();$('prompt').focus();}));root.append(welcome);}
     for(const turn of turns){
       const msg=document.createElement('div');msg.className='message '+(turn.role==='user'?'user':'assistant');
       if(turn.role==='user'){const b=document.createElement('div');b.className='bubble-user';b.textContent=turn.content;msg.appendChild(b);}
-      else{msg.classList.add('assistant-message');const avatar=document.createElement('div');avatar.className='avatar';avatar.textContent='R';const body=document.createElement('div');body.className='assistant-body';body.innerHTML=markdown(turn.content);const actions=document.createElement('div');actions.className='msg-actions';actions.appendChild(makeButton('copy-answer','Kopiuj odpowiedź',()=>copyText(turn.content)));body.appendChild(actions);msg.append(avatar,body);}
+      else{msg.classList.add('assistant-message');const avatar=document.createElement('div');avatar.className='avatar';avatar.textContent='R';const body=document.createElement('div');body.className='assistant-body';body.innerHTML=markdown(turn.content);const actions=document.createElement('div');actions.className='msg-actions';actions.appendChild(makeButton('copy-answer',t('copyAnswer'),()=>copyText(turn.content)));body.appendChild(actions);msg.append(avatar,body);}
       root.appendChild(msg);
     }
-    if(state.detail?.busy){const think=document.createElement('div');think.className='message thinking';think.innerHTML='<div class="avatar">R</div><span id="thinkingText">Analizuję źródła...</span><span class="dots"><b></b><b></b><b></b></span>';root.appendChild(think);}
+    if(state.detail?.busy){const think=document.createElement('div');think.className='message thinking';think.innerHTML='<div class="avatar">R</div><span id="thinkingText">'+esc(t('analyzing'))+'</span><span class="dots"><b></b><b></b><b></b></span>';root.appendChild(think);}
     root.querySelectorAll('.copy-code').forEach(button=>button.addEventListener('click',()=>copyText(button.closest('.code-wrap').querySelector('pre code').textContent)));
     requestAnimationFrame(()=>{const scroll=$('chatScroll');scroll.scrollTop=scroll.scrollHeight;});
   }
-  async function copyText(text){try{await navigator.clipboard.writeText(text);notify('Skopiowano do schowka');}catch{notify('Nie udało się skopiować');}}
+  async function copyText(text){try{await navigator.clipboard.writeText(text);notify(t('copied'));}catch{notify(t('copyFail'));}}
   async function refreshSessions(){state.sessions=await api('/api/bootstrap').then(x=>x.sessions);buildSessionList();}
-  async function newChat(){if(state.busy){notify('Zakończ bieżące pytanie, zanim zmienisz rozmowę.');return;}
+  async function newChat(){if(state.busy){notify(t('finishFirst'));return;}
     try{const s=await api('/api/sessions','POST');state.current=s.id;state.detail=s;localStorage.setItem('reforger-current-session',s.id);await refreshSessions();renderChat();renderTools();$('prompt').focus();$('sidebar').classList.remove('open');}catch(err){notify(err.message);}}
-  async function selectSession(sid){if(state.busy){notify('Zakończ bieżące pytanie, zanim zmienisz rozmowę.');return;}
+  async function selectSession(sid){if(state.busy){notify(t('finishFirst'));return;}
     try{state.current=sid;state.detail=await api('/api/sessions/'+sid);localStorage.setItem('reforger-current-session',sid);buildSessionList();renderChat();renderTools();$('sidebar').classList.remove('open');}catch(err){notify(err.message);}}
   function autoGrow(){const ta=$('prompt');ta.style.height='auto';ta.style.height=Math.min(185,Math.max(50,ta.scrollHeight))+'px';}
   function updateControls(){const disabled=state.busy;$('send').disabled=disabled||!$('prompt').value.trim();$('newChat').disabled=disabled;}
   async function send(){const question=$('prompt').value.trim();if(!question||state.busy||!state.current)return;
     state.busy=true;updateControls();$('prompt').value='';autoGrow();
     try{const result=await api('/api/sessions/'+state.current+'/chat','POST',{text:question});state.job=result.job_id;localStorage.setItem('reforger-active-job',result.job_id);state.detail=await api('/api/sessions/'+state.current);renderChat();await refreshSessions();pollJob();}
-    catch(err){state.busy=false;$('prompt').value=question;autoGrow();updateControls();notify('Błąd: '+err.message);}
+    catch(err){state.busy=false;$('prompt').value=question;autoGrow();updateControls();notify(t('errorPrefix')+err.message);}
   }
   async function pollJob(){if(!state.job)return;try{
     const job=await api('/api/jobs/'+state.job);if(state.detail&&state.detail.id===job.session_id){
       // Ślady bieżącego zadania są w odpowiedzi /api/jobs (tool_events); starsze zostają z wczytanej sesji.
       state.detail.traces=[...(state.detail.traces||[]).filter(t=>t.job_id!==job.id),...(job.tool_events||[])];renderTools();
-      const text=$('thinkingText');if(text){const elapsed=Math.max(0,Math.floor((Date.now()-Date.parse(job.created_at))/1000));text.textContent=(job.phase || (job.status==='queued'?'Oczekuję na model…':'Model analizuje pytanie…'))+' · '+elapsed+' s';}
+      const text=$('thinkingText');if(text){const elapsed=Math.max(0,Math.floor((Date.now()-Date.parse(job.created_at))/1000));text.textContent=(job.phase || (job.status==='queued'?t('waitingModel'):t('modelAnalyzing')))+' · '+elapsed+' s';}
     }
     if(job.status==='done'||job.status==='error'){
-      state.busy=false;state.job=null;localStorage.removeItem('reforger-active-job');state.detail=await api('/api/sessions/'+state.current);renderChat();renderTools();await refreshSessions();updateControls();if(job.status==='error')notify('Błąd modelu: '+job.error);return;
+      state.busy=false;state.job=null;localStorage.removeItem('reforger-active-job');state.detail=await api('/api/sessions/'+state.current);renderChat();renderTools();await refreshSessions();updateControls();if(job.status==='error')notify(t('modelError')+job.error);return;
     }
     state.timer=setTimeout(pollJob,750);
-  }catch(err){state.timer=setTimeout(pollJob,1750);notify('Problem z połączeniem: '+err.message);}}
-  async function init(){try{const data=await api('/api/bootstrap');state.sessions=data.sessions;state.model=data.model;state.settings={...state.settings,...(data.settings||{model:data.model})};renderSettings();if(data.status==='setup'){$('connectionText').textContent='Tryb konfiguracji: BK nie działa';const dot=document.querySelector('.status-dot');if(dot)dot.style.background='#e5534b';$('toolCount').textContent='Ustaw ścieżki (przycisk „ścieżki” u góry) i uruchom asystenta ponownie';setTimeout(()=>toggleMenu('paths'),300);}else{$('connectionText').textContent='MCP BK połączony';$('toolCount').textContent='System używa '+data.tools.length+' narzędzi Enfusion MCP BK';}
+  }catch(err){state.timer=setTimeout(pollJob,1750);notify(t('connProblem')+err.message);}}
+  async function init(){try{const data=await api('/api/bootstrap');state.sessions=data.sessions;state.model=data.model;state.settings={...state.settings,...(data.settings||{model:data.model})};state.langInfo={lang:data.lang||'pl',ui_lang:data.ui_lang||data.lang||'pl',lang_locked:!!data.lang_locked};
+      if(data.version)$('appVersion').textContent='v'+data.version;
+      if(state.langInfo.ui_lang!==LANG){LANG=state.langInfo.ui_lang==='en'?'en':'pl';try{localStorage.setItem('reforger-ui-lang',LANG);}catch{}applyStatic();}
+      state.conn={status:data.status==='setup'?'setup':'connected',tools:(data.tools||[]).length};renderConnection();
+      renderSettings();if(data.status==='setup'){setTimeout(()=>toggleMenu('paths'),300);}
       const prev=localStorage.getItem('reforger-current-session');const sid=state.sessions.find(s=>s.id===prev)?.id||state.sessions[0]?.id;
       if(sid)await selectSession(sid);else await newChat();
       const jid=localStorage.getItem('reforger-active-job');if(jid){try{const job=await api('/api/jobs/'+jid);if(job.session_id===state.current&&['queued','running'].includes(job.status)){state.busy=true;state.job=jid;pollJob();}else{localStorage.removeItem('reforger-active-job');}}catch{localStorage.removeItem('reforger-active-job');}}
       updateControls();
-    }catch(err){$('connectionText').textContent='Brak połączenia!';$('chatContent').textContent='Nie udało się połączyć z lokalnym serwerem: '+err.message;notify('Uruchom python reforger_assistant_WEB.py');}}
+    }catch(err){state.conn={status:'offline',tools:0};renderConnection();$('chatContent').textContent=t('noServer')+err.message;notify(t('startServer'));}}
   $('newChat').addEventListener('click',newChat);$('search').addEventListener('input',buildSessionList);$('send').addEventListener('click',send);$('prompt').addEventListener('input',()=>{autoGrow();updateControls();});$('prompt').addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey&&!e.isComposing){e.preventDefault();send();}});
   $('modelPill').addEventListener('click',()=>toggleMenu('model'));$('ctxPill').addEventListener('click',()=>toggleMenu('ctx'));
+  $('langMenu').addEventListener('keydown',menuKeydown);$('langPill').addEventListener('click',()=>toggleMenu('lang'));
   $('modelMenu').addEventListener('keydown',menuKeydown);$('ctxMenu').addEventListener('keydown',menuKeydown);$('pathsMenu').addEventListener('keydown',menuKeydown);$('pathsPill').addEventListener('click',()=>toggleMenu('paths'));
   document.addEventListener('click',e=>{if(!e.target.closest('.cfg-wrap'))closeMenus(false);});
   $('toggleSidebar').addEventListener('click',()=>$('sidebar').classList.toggle('open'));$('toggleTools').addEventListener('click',()=>$('toolsPanel').classList.toggle('open'));$('closeTools').addEventListener('click',()=>$('toolsPanel').classList.remove('open'));
+  applyStatic();renderConnection();
   init();
 })();
 </script>
