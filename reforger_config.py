@@ -4,15 +4,20 @@ from __future__ import annotations
 import os
 
 
-VERSION = "1.8.6"
+VERSION = "1.9.4"
 
-# Ścieżki potwierdzone podczas poprzednich testów użytkownika — edytowalne.
-MCP_SCRIPT = os.environ.get(
-    "ENFUSION_MCP_SCRIPT", r"F:\reforger-scripts\enfusion-mcp-BK\dist\index.js"
-)
-GAME_PATH = os.environ.get(
-    "ENFUSION_GAME_PATH", r"D:\SteamLibrary\steamapps\common\Arma Reforger"
-)
+# Ścieżki (od 1.9.0 ustawiane także w interfejsie): zmienna środowiskowa > assistant_web_data/settings.json
+# > wartość domyślna poniżej. Zmiana w interfejsie obowiązuje od następnego uruchomienia.
+from reforger_paths import resolve as _resolve_path, default_docs_path as _default_docs_path
+
+DEFAULT_MCP_SCRIPT = r"C:\enfusion-mcp-BK\dist\index.js"
+DEFAULT_GAME_PATH = r"C:\Program Files\Steam\steamapps\common\Arma Reforger"
+MCP_SCRIPT, _MCP_SRC = _resolve_path("mcp_script", DEFAULT_MCP_SCRIPT)
+GAME_PATH, _GAME_SRC = _resolve_path("game_path", DEFAULT_GAME_PATH)
+DOCS_PATH, _DOCS_SRC = _resolve_path("docs_path", "")          # puste = Arma Reforger Tools obok gry
+if not DOCS_PATH:
+    DOCS_PATH, _DOCS_SRC = _default_docs_path(GAME_PATH), "auto"
+PATH_SOURCES = {"mcp_script": _MCP_SRC, "game_path": _GAME_SRC, "docs_path": _DOCS_SRC}
 
 def _env_int(name: str, default: int) -> int:
     try:
@@ -50,6 +55,11 @@ OLLAMA_TIMEOUT = _env_int("OLLAMA_TIMEOUT", 300)
 OLLAMA_TEMPERATURE = _env_float("OLLAMA_TEMPERATURE", 0.1)
 OLLAMA_THINK = os.environ.get("OLLAMA_THINK", "")   # np. low / medium / high; puste = nie wysyłaj
 THINKING_KEEP_CHARS = _env_int("REFORGER_THINKING_CHARS", 3000)   # ile końcówki rozumowania zostaje w kontekście w obrębie tury; 0 = nic, -1 = całość
+# Od 1.8.7: odpowiedź Ollamy odbierana na bieżąco (stream). Gdy samo rozumowanie przekroczy THINK_ABORT_TOKENS
+# (a tekstu odpowiedzi jeszcze nie ma), silnik przerywa generację zamiast czekać do num_predict (testy: 16384 tokenów
+# rozumowania i pusta odpowiedź, ok. 2-3 min). 0 = bez przerywania. REFORGER_STREAM=off wraca do starego trybu.
+OLLAMA_STREAM = os.environ.get("REFORGER_STREAM", "on").strip().lower() != "off"
+THINK_ABORT_TOKENS = _env_int("REFORGER_THINK_ABORT", 8000)
 VIEW_LIMIT_PER_FILE = _env_int("REFORGER_VIEW_LIMIT", 6)    # max lokalnych widoków (query/zakres) jednego pliku w turze
 # Weryfikator cytatów: off = wyłączony; log = tylko wpisy [VERIFY] w logu; footer = dodatkowo znacznik pod odpowiedzią;
 # fix (domyślnie od 1.8.4) = jedna runda poprawkowa (cytat "z kodu gry", którego nie ma w pliku; numery linii
@@ -83,4 +93,5 @@ def config_summary() -> str:
             f"limit_api_klasy={SOFT_LIMIT_CLASS_SEARCH}/inne={SOFT_LIMIT_OTHER_SEARCH} "
             f"limit_widoków={VIEW_LIMIT_PER_FILE} weryfikator={VERIFY_MODE} awaryjne_w_historii={EMERGENCY_IN_HISTORY} "
             f"rozumowanie_w_turze={THINKING_KEEP_CHARS if THINKING_KEEP_CHARS >= 0 else 'całość'} "
-            f"kontrola_api={API_CHECK_MODE} wiedza_przed_kodem={KB_CHECK_MODE}")
+            f"kontrola_api={API_CHECK_MODE} wiedza_przed_kodem={KB_CHECK_MODE} "
+            f"stream={'on' if OLLAMA_STREAM else 'off'} przerwanie_rozumowania={THINK_ABORT_TOKENS or 'off'}")

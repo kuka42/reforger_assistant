@@ -7,6 +7,13 @@ import re
 from reforger_prompts import FOOTER_VERIFY, FOOTER_VERIFY_MORE, FOOTER_API
 from reforger_prompts import API_GAME_INSTANCE, API_CHAIN_NOT_SEEN, API_DECL_NO_CLASS, API_DECL_NO_OVERRIDE, API_DECL_NO_IMPLICIT
 from reforger_prompts import QUOTE_LINES_NOT_SEEN
+from reforger_prompts import (API_SCR_TAG_CLASS, API_SCR_TAG_TEXT, API_RETURN_TYPE, SYNTAX_PREFAB_JSON,
+                              SYNTAX_PRINTFORMAT, SYNTAX_ENTRY_CLASS,
+                              MARK_QUOTE_BLOCK, MARK_SYNTAX_BLOCK, MARK_LINE_REF, MARK_UNREAD_BLOCK,
+                              MARK_API_BLOCK)
+from reforger_rules import (REASONING_LEAK_START_RE, REASONING_LEAK_MARKERS_RE, REPEAT_LINE_MAX, SCR_TAG_TEXT_RE,
+                            SCR_EXAMPLE_NAME_RE,
+                            VALUE_TYPES, VALUE_TYPE_COMPAT)
 from reforger_rules import LINE_REF_RE, VERIFY_NO_FIX_MARKERS
 from reforger_rules import _COMPILE_LINE_RES, KB_SECTION_RE, SYNTAX_RULES
 from reforger_rules import KB_CHECK_CAP, KB_CHECK_DROP_WORDS, KB_CHECK_PRIORITY_RE
@@ -100,9 +107,10 @@ def _find_evidence(files: dict[str, str], path: str):
     return None, None
 
 
-def _verify_answer(answer: str, files: dict[str, str]):
+def _verify_answer(answer: str, files: dict[str, str], marks: list | None = None):
     """Sprawdza bloki kodu przypisane do plików gry: czy ich linie występują w odczytanym pliku.
-    Zwraca (uwagi, liczba_sprawdzonych_bloków, liczba_zgodnych). Nic nie zmienia i nie woła modelu."""
+    Zwraca (uwagi, liczba_sprawdzonych_bloków, liczba_zgodnych). Nic nie zmienia i nie woła modelu.
+    Od 1.8.7: gdy podano listę marks, dopisuje do niej (początek bloku, ścieżka) bloków niezgodnych z plikiem."""
     findings: list[str] = []
     checked = ok = 0
     norm_cache: dict[str, str] = {}
@@ -133,6 +141,11 @@ def _verify_answer(answer: str, files: dict[str, str]):
                 path = pending_path
         pending_path = None
         window = gap[-250:] + "\n" + "\n".join(lines[:3])
+        # Od 1.8.7: podpis "szkic" tuż POD blokiem (pierwsze niepuste linie po nim) też oznacza kod własny.
+        after = answer[match.end():match.end() + 400].split("```", 1)[0]
+        after_lines = [ln for ln in after.split("\n") if ln.strip()][:2]
+        if any(_OWN_CODE_RE.search(ln) for ln in after_lines):
+            window += "\n" + "\n".join(after_lines)
         # Decyduje ostatnia niepusta linia TUŻ przed blokiem: nagłówek "Przykład użycia" bez podpisu
         # "fragment z gry" / "Plik: ..." oznacza kod własny, nawet gdy wcześniej w akapicie padła ścieżka.
         gap_lines = [ln for ln in gap.split("\n") if ln.strip()]
@@ -173,11 +186,15 @@ def _verify_answer(answer: str, files: dict[str, str]):
             # tylko plik docelowy użytkownika - "nieodczytany" byłby fałszywym alarmem.
             new_classes = [c for c in re.findall(r"^\s*(?:sealed\s+)?class\s+([A-Za-z_]\w*)", block, re.M)
                            if not c.endswith("Class")]
-            own_new = bool(new_classes) and not any(re.search(rf"\bclass\s+{re.escape(c)}\b", t)
-                                                    for c in new_classes for t in files.values())
+            # Od 1.8.8: klasa z prefiksem gry (SCR_) przypisana do pliku gry to rzekomy cytat, nie plik moda.
+            own_new = (bool(new_classes) and not any(c.startswith("SCR_") for c in new_classes)
+                       and not any(re.search(rf"\bclass\s+{re.escape(c)}\b", t)
+                                   for c in new_classes for t in files.values()))
             if not (re.search(r"\bmodded\s+class\b", block) or own_new       # od 1.8.6: nowa klasa = plik modu
                     or re.search(r"\bclass\s+(?!SCR_)[A-Z][A-Z0-9]{1,5}_\w+", block)):
                 findings.append(f"plik '{path}' nie został odczytany w tej rozmowie - cytat niepotwierdzony")
+                if marks is not None:
+                    marks.append((match.start(), path, "unread"))
             continue
         checked += 1
         fnorm = norm_cache.setdefault(key, _norm_code(text))
@@ -208,6 +225,8 @@ def _verify_answer(answer: str, files: dict[str, str]):
         if bad_lines:
             sample = "; ".join(f"`{ln[:80]}`" for ln in bad_lines[:2])
             findings.append(f"w bloku przypisanym do '{path}' nie znaleziono w pliku linii: {sample}")
+            if marks is not None:
+                marks.append((match.start(), path, "mismatch"))
         elif discontinuous:
             findings.append(f"blok przypisany do '{path}' łączy linie, które w pliku nie sąsiadują ze sobą")
         else:
@@ -446,10 +465,12 @@ def _enum_values(texts: list[str], enum: str) -> set[str] | None:
 def _enum_problems(answer: str, texts: list[str]) -> list[str]:
     """Enum.WARTOŚĆ w kodzie odpowiedzi, gdy enum jest w dowodach, a takiej wartości w nim nie ma (np. LogLevel.INFO)."""
     problems = []
-    for lang, block in _API_CODE_BLOCK_RE.findall(answer):
-        if lang.lower() in _NON_CODE_LANGS or _PREFAB_LIKE_RE.search(block):
-            continue
-        code = _strip_code_noise(block)
+    codes = [_strip_code_noise(block) for lang, block in _API_CODE_BLOCK_RE.findall(answer)
+             if not (lang.lower() in _NON_CODE_LANGS or _PREFAB_LIKE_RE.search(block))]
+    # Od 1.8.7: także kod w linii tekstu i w tabelach (`Print("x", LogLevel.INFO);`), nie tylko bloki.
+    prose = _API_CODE_BLOCK_RE.sub("", answer)
+    codes += [span for span in re.findall(r"`([^`\n]+)`", prose)]
+    for code in codes:
         for enum, value in dict.fromkeys(re.findall(r"(?<![\w.])([A-Z]\w*)\.([A-Z][A-Z0-9_]+)\b(?!\s*\()", code)):
             values = _enum_values(texts, enum)
             if values and value not in values:
@@ -501,7 +522,82 @@ def _api_problems(answer: str, meta: dict, files: dict[str, str]) -> list[str]:
             problems.append(f"{shown}(): brak w wynikach narzędzi")
     problems = _decl_problems(answer, meta, files) + problems      # od 1.8.3: klasy bazowe i override najpierw
     problems += _enum_problems(answer, texts)                     # od 1.8.5: wymyślone wartości enumów
+    problems += _return_type_problems(answer, texts)              # od 1.8.7: typ zwracany vs typ zmiennej
+    problems += _scr_tag_problems(answer, texts, files)           # od 1.8.7: SCR_ jako prefiks klas moda
     return list(dict.fromkeys(problems))[:8]
+
+
+# ---------------------------------------------------------------- od 1.8.7
+_RET_SKIP = {"return", "new", "else", "case", "delete", "proto", "external", "static", "override", "event",
+             "private", "protected", "sealed", "native", "volatile", "const", "out", "inout", "notnull", "ref",
+             "autoptr", "owned", "local", "if", "while", "for", "foreach", "switch", "typedef", "class", "modded",
+             "and", "or", "not", "a", "the", "is", "be"}
+
+
+def _return_types(texts: list[str], meth: str) -> set[str]:
+    """Typy zwracane metody meth w wynikach narzędzi ("proto external BaseContainer GetPrefab ()")."""
+    found: set[str] = set()
+    m_re = re.escape(meth)
+    for t in texts:
+        for m in re.finditer(rf"(?<![\w.])([A-Za-z_]\w*(?:<[^<>\n]*>)?)\s+{m_re}\s*\(", t):
+            typ = m.group(1)
+            if typ.split("<", 1)[0] not in _RET_SKIP:
+                found.add(typ)
+    return found
+
+
+def _types_compatible(declared: str, returned: str) -> bool:
+    if declared == returned or declared in ("auto", "Managed", "Class") or returned == "auto":
+        return True
+    if (declared, returned) in VALUE_TYPE_COMPAT:
+        return True
+    d_val, r_val = declared in VALUE_TYPES, returned in VALUE_TYPES
+    if d_val or r_val:
+        return False            # wartość <-> obiekt albo dwie różne wartości (np. ResourceName <- BaseContainer)
+    return True                 # dwie klasy: dziedziczenia tu nie znamy, nie zgłaszamy
+
+
+def _return_type_problems(answer: str, texts: list[str]) -> list[str]:
+    """`Typ x = ....Metoda(...);` gdy wyniki narzędzi zgodnie podają inny typ zwracany tej metody
+    (H: ResourceName rn = owner.GetPrefabData().GetPrefab(); a GetPrefab() zwraca BaseContainer)."""
+    problems = []
+    for lang, block in _API_CODE_BLOCK_RE.findall(answer):
+        if lang.lower() in _NON_CODE_LANGS or _PREFAB_LIKE_RE.search(block):
+            continue
+        code = _strip_code_noise(block)
+        for m in re.finditer(r"^\s*(?:ref\s+)?([A-Za-z_]\w*)\s+([a-zA-Z_]\w*)\s*=\s*([^;\n]+?)\s*;", code, re.M):
+            typ, var, expr = m.groups()
+            if typ in _RET_SKIP:
+                continue
+            call = re.search(r"\.\s*([A-Za-z_]\w*)\s*\([^()]*\)\s*$", expr)
+            if not call or re.search(r"\bCast\s*\(", expr):
+                continue
+            meth = call.group(1)
+            rets = {r for r in _return_types(texts, meth) if r != "void"}
+            if len(rets) != 1:
+                continue        # metody nie ma w dowodach albo kilka klas ma ją z różnymi typami: nie zgadujemy
+            ret = next(iter(rets))
+            if not _types_compatible(typ, ret):
+                problems.append(API_RETURN_TYPE.format(decl=f"{typ} {var} = ...{meth}()", meth=meth, ret=ret, typ=typ))
+    return problems
+
+
+def _scr_tag_problems(answer: str, texts: list[str], files: dict[str, str]) -> list[str]:
+    """Nowa klasa moda z prefiksem SCR_ (prefiks gry) albo zalecenie SCR_ jako tagu moda w tekście."""
+    problems = []
+    for cls, _base, modded, _ov, _imp in _decl_items(answer):
+        if modded or not cls.startswith("SCR_") or cls.endswith("Class"):
+            continue
+        if _class_known(texts, cls) or any(re.search(rf"\bclass\s+{re.escape(cls)}\b", t) for t in files.values()):
+            continue            # klasa gry (cytat albo modded): to nie jest nowa klasa moda
+        problems.append(API_SCR_TAG_CLASS.format(cls=cls, rest=cls[4:]))
+    prose = _API_CODE_BLOCK_RE.sub("", answer)
+    if (re.search(SCR_TAG_TEXT_RE, prose, re.I)
+            # od 1.9.3: tabela "Tag (prefiks) | ... | `SCR_`" i przykładowe nazwy moda w tekście (`SCR_MyComponent.c`)
+            or re.search(r"^\|[^\n]*(?:tag|prefiks)[^\n]*\|\s*[*`]*SCR_[*`]*\s*\|", prose, re.I | re.M)
+            or re.search(SCR_EXAMPLE_NAME_RE, prose)):
+        problems.append(API_SCR_TAG_TEXT)
+    return problems
 
 
 def _api_footer(problems: list[str]) -> str:
@@ -541,7 +637,52 @@ def _syntax_problems(answer: str) -> list[str]:
     problems: list[str] = []
     for block in _enforce_blocks(answer):
         problems.extend(_syntax_findings(block))
+    problems.extend(_prefab_json_problems(answer))           # od 1.8.7
+    problems.extend(_format_string_problems(answer))         # od 1.8.8
+    problems.extend(_entry_class_problems(answer))           # od 1.8.8
     return list(dict.fromkeys(problems))[:6]
+
+
+def _format_string_problems(answer: str) -> list[str]:
+    """PrintFormat ze znacznikami z C (%s, %d): Enforce Script używa %1..%9 (test H)."""
+    for block in _enforce_blocks(answer):
+        hit = re.search(r'PrintFormat\s*\(\s*"[^"\n]*%[sdifx][^"\n]*"[^\n]*', block)
+        if hit:
+            return [SYNTAX_PRINTFORMAT.format(line=hit.group(0).strip()[:90])]
+    return []
+
+
+def _entry_class_problems(answer: str) -> list[str]:
+    """Wpis prefabu (.et) z inną klasą niż nowa klasa w skrypcie tej samej odpowiedzi
+    (A2: class TAG_LogWeaponPrefabUserAction w skrypcie, a w additionalActions SCR_LogWeaponPrefabUserAction)."""
+    new = {cls for cls, _b, modded, _o, _i in _decl_items(answer) if not modded}
+    if not new:
+        return []
+    problems = []
+    for lang, block in _API_CODE_BLOCK_RE.findall(answer):
+        if not (lang.lower() == "et" or _PREFAB_LIKE_RE.search(block)):
+            continue
+        for entry in dict.fromkeys(re.findall(r'^\s*([A-Za-z_]\w*)\s+"\{', block, re.M)):
+            if entry in new:
+                continue
+            tail = entry.split("_", 1)[-1]
+            twin = next((c for c in new if c.split("_", 1)[-1] == tail), None)
+            if twin:
+                problems.append(SYNTAX_ENTRY_CLASS.format(entry=entry, cls=twin))
+    return problems
+
+
+def _prefab_json_problems(answer: str) -> list[str]:
+    """Wpis prefabu (.et) podany jako JSON (A2: {"Name": ..., "ParentContextList": ...})."""
+    if not re.search(r"\.et\b|additionalActions|ActionsManagerComponent|prefab", answer, re.I):
+        return []
+    for lang, block in _API_CODE_BLOCK_RE.findall(answer):
+        b = block.strip()
+        if (lang.lower() == "json" or b.startswith(("{", "["))) and re.search(r'^\s*"\w+"\s*:', b, re.M) \
+                and re.search(r'"(?:ParentContextList|UIInfo|components|additionalActions|ActionContexts|ContextName|'
+                              r'Name|m_\w+)"\s*:', b):
+            return [SYNTAX_PREFAB_JSON]
+    return []
 
 
 def _code_line_excerpt(messages: list, file_name: str, line_no: int, radius: int = 2):
@@ -730,3 +871,128 @@ def _quote_problems(answer: str, meta: dict, files: dict[str, str]) -> list[str]
     findings, _checked, _ok = _verify_answer(answer, files)
     findings = [f for f in findings if not any(m in f for m in VERIFY_NO_FIX_MARKERS)]
     return list(dict.fromkeys(findings + _line_ref_problems(answer, meta)))[:6]
+
+
+
+# ---------------------------------------------------------------- od 1.8.7: porządkowanie i oznaczenia w treści
+def _strip_leaked_reasoning(text: str) -> tuple[str, int]:
+    """Rozumowanie gpt-oss, które trafiło do treści ("We need to answer: ... Let's craft answer in Polish.**Jak...").
+    Usuwa wstęp do pierwszego nagłówka/pogrubienia po zdaniu, gdy wstęp wygląda na rozumowanie po angielsku.
+    Zwraca (tekst, ile znaków usunięto)."""
+    if not text or not re.match(REASONING_LEAK_START_RE, text):
+        return text, 0
+    for m in re.finditer(r"(?:^|(?<=[.!?:]))[ \t]*(\*\*[^*\n]|#{1,4} |\|)", text, re.M):
+        head = text[:m.start()]
+        if len(head) < 80:
+            continue
+        if len(re.findall(REASONING_LEAK_MARKERS_RE, head)) < 2:
+            continue
+        rest = text[m.start():].lstrip()
+        if len(rest) < 80:
+            return text, 0
+        return rest, len(text) - len(rest)
+    return text, 0
+
+
+def _collapse_repeats(text: str) -> tuple[str, int]:
+    """Zapętlenie modelu: ten sam wiersz tabeli / ta sama linia tekstu powtórzona wiele razy (A1: ~90 identycznych
+    wierszy). Poza blokami kodu zostawia pierwsze REPEAT_LINE_MAX wystąpień. Zwraca (tekst, ile linii usunięto)."""
+    out, counts, removed, in_code = [], {}, 0, False
+    for line in text.split("\n"):
+        if line.strip().startswith("```"):
+            in_code = not in_code
+            out.append(line)
+            continue
+        key = re.sub(r"\s+", " ", line.strip())
+        if in_code or len(key) < 12 or re.fullmatch(r"[|:\-\s]+", key):
+            out.append(line)
+            continue
+        counts[key] = counts.get(key, 0) + 1
+        if counts[key] > REPEAT_LINE_MAX:
+            removed += 1
+            continue
+        out.append(line)
+    return "\n".join(out), removed
+
+
+def _annotate_answer(answer: str, files: dict[str, str], meta: dict, syntax: list[str] | None = None,
+                     api: list[str] | None = None) -> tuple[str, int]:
+    """Oznaczenia w TREŚCI odpowiedzi dla problemów, które przetrwały rundę poprawek: blok podpisany plikiem gry,
+    którego linii nie ma w pliku; blok z niedozwoloną składnią; numery linii spoza widoków. Zwraca (tekst, ile oznaczeń)."""
+    inserts: list[tuple[int, str]] = []
+    marks: list = []
+    _verify_answer(answer, files, marks)
+    for pos, path, kind in marks:
+        inserts.append((pos, (MARK_UNREAD_BLOCK if kind == "unread" else MARK_QUOTE_BLOCK).format(path=path)))
+    for problem in syntax or []:
+        hit = re.search(r"`([^`]+)`\s*$", problem)
+        needle = _norm_code(hit.group(1)) if hit else ""
+        for m in _API_CODE_BLOCK_RE.finditer(answer):
+            if needle and needle in _norm_code(m.group(2)):
+                text = problem[:hit.start()].rstrip(": ") if hit else problem
+                inserts.append((m.start(), MARK_SYNTAX_BLOCK.format(problem=text)))
+                break
+    # Od 1.9.1: deklaracje klas, których nie potwierdza API (np. modded class nieistniejącej klasy, klasa bazowa
+    # spoza API, SCR_ w nowej klasie moda) - oznaczenie przy bloku z tą deklaracją.
+    for problem in api or []:
+        m = re.match(r"(?:modded\s+)?class\s+([A-Za-z_]\w*)", problem)
+        if not m:
+            continue
+        decl_re = re.compile(rf"^\s*(?:modded\s+)?(?:sealed\s+)?class\s+{re.escape(m.group(1))}\b", re.M)
+        for b in _API_CODE_BLOCK_RE.finditer(answer):
+            if decl_re.search(b.group(2)):
+                if not any(p == b.start() and problem in t for p, t in inserts):
+                    inserts.append((b.start(), MARK_API_BLOCK.format(problem=problem)))
+                break
+    count = len(inserts)
+    for pos, mark in sorted(inserts, key=lambda x: -x[0]):
+        line_start = answer.rfind("\n", 0, pos) + 1
+        answer = answer[:line_start] + mark + answer[line_start:]
+    # numery linii: po wstawieniach (nie przesuwają się, bo szukamy tekstu, nie pozycji)
+    bad = [ref for ref in _line_refs(answer) if _ref_unconfirmed(ref, meta)]
+    labels = list(dict.fromkeys(ref[0].replace("tabela: ", "", 1) for ref in bad))
+    for label in labels:
+        if not label:
+            continue
+        answer, n = re.subn(re.escape(label) + r"(?!" + re.escape(MARK_LINE_REF) + ")", label + MARK_LINE_REF, answer)
+        count += n
+    return answer, count
+
+
+def _sync_entry_classes(answer: str) -> tuple[str, list[tuple[str, str]]]:
+    """Od 1.8.8: wpis .et z klasą, która różni się od nowej klasy w skrypcie tej samej odpowiedzi tylko tagiem
+    (SCR_LogWeaponPrefabUserAction we wpisie, TAG_LogWeaponPrefabUserAction w skrypcie), silnik ujednolica sam:
+    nazwa we wpisie musi być nazwą klasy ze skryptu. Zmienia tylko pierwszy token wpisu w bloku prefabu."""
+    pairs = []
+    for problem_entry, cls in _entry_class_pairs(answer):
+        pairs.append((problem_entry, cls))
+    if not pairs:
+        return answer, []
+
+    def fix_block(m: re.Match) -> str:
+        block = m.group(0)
+        if not (m.group(1).lower() == "et" or _PREFAB_LIKE_RE.search(m.group(2))):
+            return block
+        for old, new in pairs:
+            block = re.sub(rf'^(\s*){re.escape(old)}(\s+"\{{)', rf"\g<1>{new}\g<2>", block, flags=re.M)
+        return block
+
+    return _API_CODE_BLOCK_RE.sub(fix_block, answer), pairs
+
+
+def _entry_class_pairs(answer: str) -> list[tuple[str, str]]:
+    new = {cls for cls, _b, modded, _o, _i in _decl_items(answer) if not modded}
+    out = []
+    if not new:
+        return out
+    for lang, block in _API_CODE_BLOCK_RE.findall(answer):
+        if not (lang.lower() == "et" or _PREFAB_LIKE_RE.search(block)):
+            continue
+        for entry in dict.fromkeys(re.findall(r'^\s*([A-Za-z_]\w*)\s+"\{', block, re.M)):
+            if entry in new:
+                continue
+            tail = entry.split("_", 1)[-1]
+            twins = [c for c in new if c.split("_", 1)[-1] == tail]
+            if len(twins) == 1 and (entry, twins[0]) not in out:
+                out.append((entry, twins[0]))
+    return out

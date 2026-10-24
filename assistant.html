@@ -152,6 +152,9 @@ a:hover, a:active {
     .assistant-body th, .assistant-body td { border-color: #424244; }
     .assistant-body th { background: #252526; color: #f1efed; }
     .assistant-body td { background: #1a1b1c; }
+    /* od 1.9.4: w tabelach bez łamania w środku słowa (overflow-wrap:anywhere zwężało kolumny do pojedynczych znaków) */
+    .assistant-body th, .assistant-body td { overflow-wrap: normal; word-break: normal; min-width: 4.5em; }
+    .assistant-body td:not(:first-child) code { overflow-wrap: anywhere; }   /* długie nazwy w kolumnach opisu mogą się złamać, ścieżki w 1. kolumnie łamią się po '/' */
     .assistant-body blockquote { border-left-color: var(--accent); color: #bababc; }
     .copy-answer { color: #a0a1a4; }
     .copy-answer:hover { color: #ffb27b; }
@@ -217,6 +220,24 @@ a:hover, a:active {
     .cfg-custom button { padding: 8px 12px; border: 0; border-radius: 8px; background: var(--accent); color: #26170c; font-weight: 700; font-size: 12px; }
     .cfg-custom button:hover { background: var(--accent-hover); }
     .cfg-error { padding: 2px 11px 6px; font-size: 11px; color: #ffb2ab; }
+    .cfg-menu.wide { min-width: min(520px, 92vw); max-width: min(560px, 94vw); max-height: min(78vh, 640px); }
+    .path-field { padding: 8px 11px 10px; border-top: 1px solid var(--border); }
+    .path-field:first-of-type { border-top: 0; }
+    .path-label { font-size: 12px; font-weight: 650; color: #dadadc; margin-bottom: 6px; }
+    .path-field input { width: 100%; padding: 8px 10px; background: #111213; border: 1px solid var(--border); border-radius: 8px; color: var(--text); font-size: 12px; font-family: ui-monospace, Consolas, monospace; }
+    .path-field input:focus { outline: none; border-color: var(--accent); }
+    .path-field input:disabled { opacity: .6; }
+    .path-now { margin-top: 5px; font-size: 11px; color: #8e8f91; word-break: break-all; }
+    .path-status { margin-top: 4px; font-size: 11px; }
+    .path-status.ok { color: #6fd6a4; }
+    .path-status.bad { color: #ffb2ab; }
+    .path-status.warn { color: #f0c27a; }
+    .path-actions { display: flex; gap: 8px; justify-content: flex-end; padding: 10px 11px 6px; border-top: 1px solid var(--border); }
+    .path-actions button { padding: 8px 14px; border: 1px solid var(--border); border-radius: 8px; background: #1b1c1e; color: var(--text); font-size: 12px; font-weight: 650; }
+    .path-actions button.primary { background: var(--accent); border-color: var(--accent); color: #26170c; }
+    .path-actions button:hover { filter: brightness(1.1); }
+    .path-banner { margin: 6px 11px; padding: 9px 11px; border-radius: 8px; background: #3a2a1c; color: #ffd9b8; font-size: 12px; line-height: 1.5; }
+    .path-banner.bad { background: #3a1f1f; color: #ffc9c4; }
     @media (max-width: 700px) {
       .top-right { gap: 6px; }
       .top-title { max-width: none; }
@@ -239,10 +260,10 @@ a:hover, a:active {
     <div class="search-wrap"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m16 16 5 5"/></svg><input id="search" autocomplete="off" placeholder="Szukaj rozmów..." aria-label="Szukaj rozmów"></div>
     <div class="side-label">Historia rozmów</div>
     <div id="sessionList" class="session-list"></div>
-    <div class="side-footer"><div class="footer-row"><span class="status-dot"></span><span id="connectionText">Łączenie z MCP BK...</span></div><div class="small-note">Stan połączenia z serwerem MCP<br><br>v1.8.6 - <a href="https://github.com/kuka42" target="_new">KUKA</a></div></div>
+    <div class="side-footer"><div class="footer-row"><span class="status-dot"></span><span id="connectionText">Łączenie z MCP BK...</span></div><div class="small-note">Stan połączenia z serwerem MCP<br><br>v1.9.4 - <a href="https://github.com/kuka42" target="_new">KUKA</a></div></div>
   </aside>
   <main class="main">
-    <header class="topbar"><div class="top-left"><button class="icon-button only-mobile" id="toggleSidebar" aria-label="Pokaż historię">☰</button><div style="min-width:0"><div class="top-title" id="currentTitle">Nowa rozmowa</div><div class="top-subtitle" id="modelLine">GPT-OSS · Ollama</div></div></div><div class="top-right"><div class="cfg-wrap"><button type="button" class="cfg-pill" id="modelPill" aria-haspopup="listbox" aria-expanded="false" aria-controls="modelMenu" title="Wybierz model Ollamy"><span class="cfg-label">model</span><span class="cfg-value" id="modelValue">…</span><span class="cfg-caret" aria-hidden="true">▾</span></button><div class="cfg-menu" id="modelMenu" role="listbox" aria-label="Model Ollamy" hidden></div></div><div class="cfg-wrap"><button type="button" class="cfg-pill" id="ctxPill" aria-haspopup="listbox" aria-expanded="false" aria-controls="ctxMenu" title="Wybierz rozmiar kontekstu"><span class="cfg-label">kontekst</span><span class="cfg-value" id="ctxValue">…</span><span class="cfg-caret" aria-hidden="true">▾</span></button><div class="cfg-menu" id="ctxMenu" role="listbox" aria-label="Rozmiar kontekstu" hidden></div></div><span class="pill">● LOCAL ONLY</span><button class="icon-button only-mobile" id="toggleTools" aria-label="Pokaż aktywność MCP" title="Aktywność MCP">⚙</button></div></header>
+    <header class="topbar"><div class="top-left"><button class="icon-button only-mobile" id="toggleSidebar" aria-label="Pokaż historię">☰</button><div style="min-width:0"><div class="top-title" id="currentTitle">Nowa rozmowa</div><div class="top-subtitle" id="modelLine">GPT-OSS · Ollama</div></div></div><div class="top-right"><div class="cfg-wrap"><button type="button" class="cfg-pill" id="modelPill" aria-haspopup="listbox" aria-expanded="false" aria-controls="modelMenu" title="Wybierz model Ollamy"><span class="cfg-label">model</span><span class="cfg-value" id="modelValue">…</span><span class="cfg-caret" aria-hidden="true">▾</span></button><div class="cfg-menu" id="modelMenu" role="listbox" aria-label="Model Ollamy" hidden></div></div><div class="cfg-wrap"><button type="button" class="cfg-pill" id="ctxPill" aria-haspopup="listbox" aria-expanded="false" aria-controls="ctxMenu" title="Wybierz rozmiar kontekstu"><span class="cfg-label">kontekst</span><span class="cfg-value" id="ctxValue">…</span><span class="cfg-caret" aria-hidden="true">▾</span></button><div class="cfg-menu" id="ctxMenu" role="listbox" aria-label="Rozmiar kontekstu" hidden></div></div><div class="cfg-wrap"><button type="button" class="cfg-pill" id="pathsPill" aria-haspopup="dialog" aria-expanded="false" aria-controls="pathsMenu" title="Ścieżki do BK, gry i dokumentacji"><span class="cfg-label">ścieżki</span><span class="cfg-value" id="pathsValue">BK · AR</span><span class="cfg-caret" aria-hidden="true">▾</span></button><div class="cfg-menu wide" id="pathsMenu" role="dialog" aria-label="Ścieżki" hidden></div></div><span class="pill">● LOCAL ONLY</span><button class="icon-button only-mobile" id="toggleTools" aria-label="Pokaż aktywność MCP" title="Aktywność MCP">⚙</button></div></header>
     <section class="chat-scroll" id="chatScroll"><div class="chat-inner" id="chatContent"></div></section>
     <footer class="composer-area"><div class="composer"><textarea id="prompt" rows="2" placeholder="Zapytaj o skrypty, API albo mechaniki Arma Reforger..." aria-label="Wiadomość"></textarea><div class="composer-footer"><span class="composer-hint">Enter — wyślij · Shift+Enter — nowa linia</span><button class="send-button" id="send">Wyślij <span style="font-size:16px;line-height:12px">↗</span></button></div></div><div class="below-composer">Odpowiedzi modelu wymagają weryfikacji przed użyciem w modzie.</div></footer>
   </main>
@@ -272,7 +293,9 @@ a:hover, a:active {
     s=s.replace(/\*\*(.+?)\*\*/g,'<strong>$1</strong>');
     s=s.replace(/(^|[\s(])\*([^*\s][^*\n]*?)\*(?=$|[\s).,;:!?])/g,'$1<em>$2</em>');
     s=s.replace(/(^|[\s(])_([^_\n]+?)_(?=$|[\s).,;:!?])/g,'$1<em>$2</em>');
-    return s.replace(/\u0000(\d+)\u0000/g,(m,i)=>'<code>'+codes[Number(i)]+'</code>');
+    // Od 1.9.4: długie ścieżki i nazwy łamią się po '/', a nie w środku słowa (tabele w wąskich kolumnach).
+    const soft=c=>c.length>22?c.replace(/\//g,'/<wbr>'):c;
+    return s.replace(/\u0000(\d+)\u0000/g,(m,i)=>'<code>'+soft(codes[Number(i)])+'</code>');
   }
   // Podział wiersza tabeli na komórki: nie tnie w kodzie (`a || b`) ani po \| .
   function splitRow(row){
@@ -336,7 +359,7 @@ a:hover, a:active {
   // ---- Wybór modelu i kontekstu (górny pasek) ----
   const fmtCtx=n=>{const k=n/1024;return (Number.isInteger(k)?k:Math.round(k))+'k';};
   const fmtNum=n=>String(n).replace(/\B(?=(\d{3})+(?!\d))/g,'\u00a0');
-  const MENUS={model:{pill:'modelPill',menu:'modelMenu'},ctx:{pill:'ctxPill',menu:'ctxMenu'}};
+  const MENUS={model:{pill:'modelPill',menu:'modelMenu'},ctx:{pill:'ctxPill',menu:'ctxMenu'},paths:{pill:'pathsPill',menu:'pathsMenu'}};
   function renderSettings(){
     const st=state.settings;
     $('modelValue').textContent=st.model||'…';$('modelPill').title='Model: '+(st.model||'?')+' (kliknij, aby zmienić)';
@@ -354,7 +377,7 @@ a:hover, a:active {
     const m=$(MENUS[which].menu),p=$(MENUS[which].pill),wasOpen=!m.hidden;
     closeMenus(false);if(wasOpen)return;
     m.hidden=false;p.setAttribute('aria-expanded','true');
-    if(which==='model')buildModelMenu();else buildCtxMenu();
+    if(which==='model')buildModelMenu();else if(which==='paths')buildPathsMenu();else buildCtxMenu();
   }
   async function applySettings(patch,label){
     try{
@@ -401,6 +424,40 @@ a:hover, a:active {
     go.addEventListener('click',submit);input.addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();submit();}});
     row.append(label,input,go);root.append(row,error);
     focusSelected(root);
+  }
+  // ---- Ścieżki (od 1.9.0): zapis w settings.json, działają od ponownego uruchomienia ----
+  const PATH_KEYS=['mcp_script','game_path','docs_path'];
+  function pathStatus(node,check,optional){node.textContent=(check.ok?'✓ ':optional?'! ':'✗ ')+check.message;node.className='path-status '+(check.ok?'ok':optional?'warn':'bad');}
+  async function buildPathsMenu(){
+    const root=$('pathsMenu');root.replaceChildren(el('div','cfg-title','Ścieżki'),el('div','cfg-note','Ładowanie…'));
+    let data;try{data=await api('/api/paths');}catch(err){root.replaceChildren(el('div','cfg-title','Ścieżki'),el('div','cfg-error',err.message));return;}
+    if(root.hidden)return;
+    root.replaceChildren(el('div','cfg-title','Ścieżki'));
+    if(data.setup_mode)root.append(el('div','path-banner bad','Tryb konfiguracji: BK się nie uruchomił ('+(data.setup_error||'nieznany błąd')+'). Popraw ścieżki, zapisz i uruchom asystenta ponownie.'));
+    const banner=el('div','path-banner','Zapisane ścieżki zadziałają po ponownym uruchomieniu asystenta (zamknij okno serwera albo Ctrl+C i uruchom go jeszcze raz).');banner.hidden=!data.restart_needed;root.append(banner);
+    const inputs={},statuses={};
+    for(const key of PATH_KEYS){
+      const f=data.fields[key],box=el('div','path-field'),input=document.createElement('input');
+      input.type='text';input.spellcheck=false;input.autocomplete='off';input.id='path_'+key;
+      input.value=f.locked?f.active:(f.saved||(f.source==='default'||f.source==='auto'?'':f.active));
+      if(key==='docs_path')input.placeholder='puste = obok gry: '+(f.source==='auto'?f.active:'Arma Reforger Tools\\Workbench\\docs');
+      else input.placeholder='wklej pełną ścieżkę';
+      input.disabled=!!f.locked;
+      const label=el('label','path-label',f.label);label.htmlFor=input.id;
+      const now=el('div','path-now','Teraz używana: '+(f.active||'—')+' ('+f.source_label+(f.locked?'; zmienna '+f.env+' ma pierwszeństwo, zmień ją w pliku uruchomieniowym':'')+')');
+      const st=el('div','path-status');st.hidden=true;
+      box.append(label,input,now,st);root.append(box);inputs[key]=input;statuses[key]=st;
+      input.addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();check();}});
+    }
+    const values=()=>Object.fromEntries(PATH_KEYS.map(k=>[k,inputs[k].disabled?'':inputs[k].value]));
+    const show=checks=>{for(const k of PATH_KEYS){if(inputs[k].disabled){statuses[k].hidden=true;continue;}pathStatus(statuses[k],checks[k],k==='docs_path');statuses[k].hidden=false;}};
+    async function check(){try{const r=await api('/api/paths/check','POST',values());show(r.checks);}catch(err){notify(err.message);}}
+    async function save(){try{const r=await api('/api/paths','POST',values());show(r.checks);banner.hidden=!r.restart_needed;
+      notify(r.restart_needed?'Zapisano. Uruchom asystenta ponownie, żeby użyć nowych ścieżek.':'Zapisano (bez zmian w używanych ścieżkach).');}catch(err){notify(err.message);}}
+    const actions=el('div','path-actions'),b1=el('button',null,'Sprawdź'),b2=el('button','primary','Zapisz');b1.type=b2.type='button';
+    b1.addEventListener('click',check);b2.addEventListener('click',save);actions.append(b1,b2);root.append(actions);
+    root.append(el('div','cfg-note','Ścieżkę skopiujesz z paska adresu Eksploratora Windows. Asystent tylko sprawdza, czy wskazane pliki istnieją; model nie dostaje przez to żadnego dostępu.'));
+    (PATH_KEYS.map(k=>inputs[k]).find(i=>!i.disabled)||b1).focus();
   }
   function menuKeydown(e){
     const root=e.currentTarget;
@@ -475,7 +532,7 @@ a:hover, a:active {
     }
     state.timer=setTimeout(pollJob,750);
   }catch(err){state.timer=setTimeout(pollJob,1750);notify('Problem z połączeniem: '+err.message);}}
-  async function init(){try{const data=await api('/api/bootstrap');state.sessions=data.sessions;state.model=data.model;state.settings={...state.settings,...(data.settings||{model:data.model})};renderSettings();$('connectionText').textContent='MCP BK połączony';$('toolCount').textContent='System używa '+data.tools.length+' narzędzi Enfusion MCP BK';
+  async function init(){try{const data=await api('/api/bootstrap');state.sessions=data.sessions;state.model=data.model;state.settings={...state.settings,...(data.settings||{model:data.model})};renderSettings();if(data.status==='setup'){$('connectionText').textContent='Tryb konfiguracji: BK nie działa';const dot=document.querySelector('.status-dot');if(dot)dot.style.background='#e5534b';$('toolCount').textContent='Ustaw ścieżki (przycisk „ścieżki” u góry) i uruchom asystenta ponownie';setTimeout(()=>toggleMenu('paths'),300);}else{$('connectionText').textContent='MCP BK połączony';$('toolCount').textContent='System używa '+data.tools.length+' narzędzi Enfusion MCP BK';}
       const prev=localStorage.getItem('reforger-current-session');const sid=state.sessions.find(s=>s.id===prev)?.id||state.sessions[0]?.id;
       if(sid)await selectSession(sid);else await newChat();
       const jid=localStorage.getItem('reforger-active-job');if(jid){try{const job=await api('/api/jobs/'+jid);if(job.session_id===state.current&&['queued','running'].includes(job.status)){state.busy=true;state.job=jid;pollJob();}else{localStorage.removeItem('reforger-active-job');}}catch{localStorage.removeItem('reforger-active-job');}}
@@ -483,7 +540,7 @@ a:hover, a:active {
     }catch(err){$('connectionText').textContent='Brak połączenia!';$('chatContent').textContent='Nie udało się połączyć z lokalnym serwerem: '+err.message;notify('Uruchom python reforger_assistant_WEB.py');}}
   $('newChat').addEventListener('click',newChat);$('search').addEventListener('input',buildSessionList);$('send').addEventListener('click',send);$('prompt').addEventListener('input',()=>{autoGrow();updateControls();});$('prompt').addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey&&!e.isComposing){e.preventDefault();send();}});
   $('modelPill').addEventListener('click',()=>toggleMenu('model'));$('ctxPill').addEventListener('click',()=>toggleMenu('ctx'));
-  $('modelMenu').addEventListener('keydown',menuKeydown);$('ctxMenu').addEventListener('keydown',menuKeydown);
+  $('modelMenu').addEventListener('keydown',menuKeydown);$('ctxMenu').addEventListener('keydown',menuKeydown);$('pathsMenu').addEventListener('keydown',menuKeydown);$('pathsPill').addEventListener('click',()=>toggleMenu('paths'));
   document.addEventListener('click',e=>{if(!e.target.closest('.cfg-wrap'))closeMenus(false);});
   $('toggleSidebar').addEventListener('click',()=>$('sidebar').classList.toggle('open'));$('toggleTools').addEventListener('click',()=>$('toolsPanel').classList.toggle('open'));$('closeTools').addEventListener('click',()=>$('toolsPanel').classList.remove('open'));
   init();

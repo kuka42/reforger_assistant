@@ -91,10 +91,13 @@ Ustawiasz je w launcherze (`set "NAZWA=wartość"`) albo w PowerShellu (`$env:NA
 
 ### Ścieżki i połączenia
 
+Od 1.9.0 ścieżki do BK, gry i dokumentacji ustawisz w interfejsie: przycisk **ścieżki** na górnym pasku. „Sprawdź” pokazuje przy każdym polu, czy plik albo folder istnieje (dla BK także, czy jest Node.js). „Zapisz” zapisuje je w `assistant_web_data\settings.json`. **Nowe ścieżki działają od ponownego uruchomienia asystenta.** Jeśli przy starcie BK się nie uruchomi (np. zła ścieżka), asystent nie kończy pracy, tylko startuje w trybie konfiguracji i od razu pokazuje formularz ścieżek. Pierwszeństwo: zmienna środowiskowa > ustawienia z interfejsu > wartość domyślna; ścieżka narzucona zmienną jest w interfejsie tylko do podglądu. Przy starcie w logu: `[ŚCIEŻKI]` z aktualnymi ścieżkami i ich źródłem.
+
 |**Zmienna**|**Domyślnie**|**Opis**|
 |-|-|-|
 |`ENFUSION_MCP_SCRIPT`|ścieżka autora|Plik `dist/index.js` serwera Enfusion MCP BK|
 |`ENFUSION_GAME_PATH`|ścieżka autora|Folder zainstalowanej gry|
+|`REFORGER_DOCS_PATH`|obok gry: `Arma Reforger Tools\Workbench\docs`|Folder `docs` dokumentacji API z Arma Reforger Tools (hierarchia klas). Zwykle nie trzeba ustawiać: asystent szuka go w tym samym `steamapps\common` co gra|
 |`OLLAMA_CHAT_URL`|`http:/127.0.0.1:11434/api/chat`|Adres Ollamy|
 |`OLLAMA_MODEL`|`gpt-oss:20b`|Model domyślny (nadpisywany przez `settings.json` i `--model`)|
 
@@ -108,6 +111,8 @@ Ustawiasz je w launcherze (`set "NAZWA=wartość"`) albo w PowerShellu (`$env:NA
 |`OLLAMA_THINK`|puste|Poziom rozumowania: `low`, `medium`, `high`; puste = nie wysyłaj|
 |`OLLAMA_TIMEOUT`|`300`|Limit czasu odpowiedzi Ollamy (sekundy)|
 |`REFORGER_THINKING_CHARS`|`3000`|Ile końcówki rozumowania zostaje w kontekście w obrębie tury; `0` = nic, `-1` = całość|
+|`REFORGER_STREAM`|`on`|Odbieranie odpowiedzi Ollamy na bieżąco; `off` = stary tryb (cała odpowiedź naraz, bez przerywania rozumowania)|
+|`REFORGER_THINK_ABORT`|`8000`|Po ilu tokenach samego rozumowania (bez tekstu odpowiedzi) silnik przerywa generację i ponawia ją z niskim rozumowaniem; `0` = nie przerywaj|
 
 ### Narzędzia i limity
 
@@ -151,7 +156,10 @@ Do modelu trafia wyłącznie osiem narzędzi **tylko do odczytu** z listy dozwol
 * Poprawia typowe błędy wywołań narzędzi i wykrywa powtórzenia oraz pętle bez nowych danych.
 * Skraca długie wyniki tak, żeby zachować wszystkie deklaracje (nie ucina listy metod w połowie).
 * Oznacza wyniki wyszukiwania pierwszym wierszem `[Dokładne trafienie ...]` albo `[BRAK DOKŁADNEGO TRAFIENIA ...]`, żeby model nie traktował podobnej nazwy jako dowodu istnienia. Wyjątek: funkcje globalne (`GetGame`, `Print`, `PrintFormat`), których `api_search` nie indeksuje, dostają osobną notatkę, że brak trafienia nie znaczy „nie istnieje”.
-* Uzupełnia hierarchię klas. Dane API w BK mają dla wielu klas błędną hierarchię: brak klasy bazowej (np. `ArmaReforgerScripted`, `ChimeraWorld`) albo przodków wpisanych jako „Direct subclasses” (np. `SCR_ToggleSafetyUserAction`). Gdy model szuka dokładnej nazwy klasy, silnik czyta deklarację `class X : Y` z pliku gry i dopisuje prawdziwy łańcuch z nazwami metod klas bazowych. Wywołania silnika są widoczne w panelu MCP i w logu jako `[BAZA]`; nie wliczają się do limitu modelu.
+* Uzupełnia hierarchię klas. Dane API w BK mają dla wielu klas błędną hierarchię: brak klasy bazowej (np. `ArmaReforgerScripted`, `ChimeraWorld`) albo przodków wpisanych jako „Direct subclasses” (np. `SCR_ToggleSafetyUserAction`). Od 1.8.8 silnik czyta prawdziwe drzewo dziedziczenia z lokalnej dokumentacji API dołączonej do Arma Reforger Tools (`Workbench\docs\ArmaReforgerScriptAPIPublic\html\hierarchy.html` i `Workbench\docs\EnfusionScriptAPI\html\hierarchy.html`; tylko odczyt z dysku, bez internetu). Gdy model szuka dokładnej nazwy klasy, a BK podaje inną klasę bazową albo błędne podklasy, silnik dopisuje do wyniku prawdziwy łańcuch, podklasy i nazwy metod klas bazowych. Bez Arma Reforger Tools silnik czyta deklarację `class X : Y` z pliku gry, jak wcześniej. Przy starcie w logu: `[DOKUMENTACJA]`, przy klasie: `[BAZA]`. Wywołania silnika nie wliczają się do limitu modelu.
+* Wpis `.et`, którego klasa różni się od nowej klasy w skrypcie tej samej odpowiedzi tylko tagiem (np. `SCR_X` we wpisie, `TAG_X` w skrypcie), silnik ujednolica sam (`[AUTOPOPRAWKA]`). Blok podpisany plikiem gry, którego asystent nie odczytał, jest oznaczony w treści.
+* Seria rund bez nowych danych kończy wyszukiwanie dopiero po wykorzystaniu części limitu wywołań (od 1.8.9: 8 wywołań MCP) albo po 6 takich rundach; wcześniej model bywał zatrzymywany po 4 wywołaniach.
+* Gdy `api_search` nie zna nazwy (np. enumu `LogLevel`), a w grze jest plik o dokładnie takiej nazwie, silnik dopisuje jego ścieżkę, żeby model nie uznał, że takiej rzeczy nie ma. W logu: `[PLIK]`.
 * Kontrola nazw API sama pobiera pełny widok klasy i jej przodków, zanim zgłosi nazwę jako niepotwierdzoną. Sprawdza też deklaracje: klasę bazową w `class X : Y`, klasę w `modded class X` i metody oznaczone `override`.
 * Gdy model zapyta `api_search` o dokładną nazwę klasy, dostaje pełny widok klasy (wszystkie metody), a nie skrót z 10 metod. Długie wyniki są skracane bez gubienia sygnatur.
 * Odrzuca od razu, bez zużywania limitu, wywołania, które z definicji nic nie dadzą: `game_browse` z `pattern` innym niż rozszerzenie i `asset_search` z fragmentem kodu w zapytaniu.
@@ -161,10 +169,13 @@ Do modelu trafia wyłącznie osiem narzędzi **tylko do odczytu** z listy dozwol
 * W kodzie własnej klasy wywołania bez obiektu (np. `GetEntity()` w komponencie) muszą istnieć w klasie bazowej lub jej przodkach; `GetComponent<T>()` jest zgłaszane jako składnia, której Enforce Script nie ma.
 * Numery linii sprawdzane są także w kolumnach tabel (nagłówek „Linia/Linie”). W logu `[LINIE]` widać, ile odwołań do linii ma odpowiedź i ile numerów model faktycznie widział w widokach pliku. Kontrola cytatów obejmuje też odpowiedzi napisane po przerwaniu wyszukiwania.
 * Wartości enumów w kodzie (np. `LogLevel.INFO`) są sprawdzane, gdy enum jest w odczytanych plikach albo wynikach `api_search`.
-* Dla funkcji globalnych (`Print`, `PrintFormat`, `GetGame`) `api_search` nie pokazuje mylących metod klas testowych o tej samej nazwie, tylko notatkę i listę takich klas.
+* Dla funkcji globalnych (`Print`, `PrintFormat`, `GetGame`) `api_search` nie pokazuje mylących metod klas testowych o tej samej nazwie, tylko notatkę i listę takich klas. Od 1.9.2 przy `Print` i `PrintFormat` silnik dopisuje dosłowną deklarację z pliku gry `EnDebug.c` (ścieżkę ustala sam; w logu `[GLOBALNA]`), bo BK nie przeszukuje treści plików i model nie miał jak jej znaleźć.
 * Wymyślone narzędzia „szukaj w treści plików” (np. `game_search`): ze ścieżką do pliku zamieniane na `game_read` z `query`, bez ścieżki odrzucane z podpowiedzią.
-* Rundy poprawkowe (kontrola API, cytaty, wiedza przed kodem): model widzi swój odrzucony szkic. Jeśli poprawka ma więcej problemów niż pierwszy szkic, zostaje pierwszy szkic. W logu: `[SZKIC]`.
-* Przy pustej generacji po użyciu narzędzi ponawia próbę z niskim poziomem rozumowania, w tej samej rozmowie.
+* Rundy poprawkowe (kontrola API, cytaty, wiedza przed kodem): model widzi swój odrzucony szkic. Od 1.9.1 podpowiedź z wzorcami z bazy wiedzy przypomina pytanie użytkownika (model nie odpowiada wtedy na samą podpowiedź), a deklaracje klas, których nie potwierdza API, są oznaczone w treści przy bloku kodu. Jeśli poprawka ma więcej problemów niż pierwszy szkic, zostaje pierwszy szkic. W logu: `[SZKIC]`.
+* Przy pustej generacji po użyciu narzędzi ponawia próbę z niskim poziomem rozumowania, w tej samej rozmowie. Od 1.8.7 rozumowanie, które przekroczy `REFORGER_THINK_ABORT` tokenów bez tekstu odpowiedzi, jest przerywane od razu (wcześniej model potrafił „myśleć” do limitu 16 384 tokenów, ok. 2-3 minuty). W logu: `rozumowanie przerwane`.
+* Rozumowanie modelu, które trafi do treści odpowiedzi (np. „We need to answer...”), jest usuwane (`[ROZUMOWANIE]`), a zapętlone, powtarzane wiersze tabel i tekstu skracane (`[POWTÓRZENIA]`).
+* Problemy, które przetrwały rundę poprawek, są oznaczone **w treści** odpowiedzi, a nie tylko w stopce: blok podpisany plikiem gry, którego linii nie ma w pliku, blok z niedozwoloną składnią (`> ⚠ Uwaga silnika: ...`) i numer linii spoza widoków pliku (od 1.9.4 krótkie `⚠` przy numerze; wyjaśnienie w stopce). W logu: `[OZNACZENIA]`.
+* Kontrola kodu sprawdza też: typ zwracany przy przypisaniu (np. `ResourceName x = ...GetPrefab()`, gdy `GetPrefab()` zwraca `BaseContainer`), nową klasę moda z prefiksem `SCR_` (to prefiks klas gry) i zalecanie `SCR_` jako tagu moda, wpis prefabu `.et` zapisany jako JSON oraz wartości enumów także w kodzie w tabelach i w tekście. Odpowiedź napisana po przerwaniu wyszukiwania przechodzi te same kontrole (jedna poprawka bez narzędzi).
 * Prompt wymaga odróżniania faktów zweryfikowanych od założeń, oznaczania kodu jako „z kodu gry” tylko wtedy, gdy jest przepisany dosłownie z odczytu pliku, oraz opisania, co jeszcze trzeba przetestować w grze.
 
 ### Odpowiedzi awaryjne
@@ -248,6 +259,8 @@ Pytania i reguły są po polsku i dobrane pod `gpt-oss:20b`. Ocena regułowa jes
 |`reforger_rules.py`|Reguły jako dane: narzędzia, wzorce, listy nazw|
 |`reforger_checks.py`|Kontrole odpowiedzi: weryfikator cytatów, kontrola API|
 |`reforger_mcp.py`|Klient Enfusion MCP|
+|`reforger_docs.py`|Hierarchia klas z lokalnej dokumentacji API Workbencha (od 1.8.8)|
+|`reforger_paths.py`|Ścieżki z interfejsu: zapis w `settings.json` i sprawdzanie plików (od 1.9.0)|
 
 ## Licencja i autor
 

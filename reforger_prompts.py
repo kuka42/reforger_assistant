@@ -97,6 +97,8 @@ OUTPUT
   Copy them from files you read, or mark them "WYMYSLONE - do zastapienia".
 - Label code "z kodu gry" ONLY if it is copied verbatim from a game_read result you received;
   anything you write yourself is "szkic". Never attribute code to a file you did not read.
+  In Polish write the label as "to szkic" (e.g. "Ten kod to szkic", "Nazwy UI to szkic"), never "jest szkic" /
+  "są szkic", so it is grammatical for singular and plural.
 - Never write "zobaczone w API" or "zweryfikowane" for a name unless it appears in a tool result.
 - Quote line numbers only if they come from a local game_read view (they match the file); never guess them.
 - Components are obtained with FindComponent(Type) and Type.Cast(...) as in game code;
@@ -234,12 +236,14 @@ TOOL_READ_ONLY_NOTE = " [W tym asystencie tylko odczyt: dozwolone akcje: {allowe
 
 
 # ---------------------------------------------------------------- wiedza przed kodem (od 1.8.0)
-HINT_KB_CHECK = (                         # {query} {files} {excerpt}
+HINT_KB_CHECK = (                         # {query} {files} {excerpt} {question}
     "[Uwaga systemowa] Zanim wyślesz kod, porównaj go ze wzorcami z bazy wiedzy BK "
     "(wb_knowledge('{query}'), pliki: {files}):\n\n{excerpt}\n\n"
     "Jeśli wzorce pokazują inny, właściwy sposób (np. którą klasę modyfikować, gdzie dać warunek serwera, "
     "kiedy wywołać super, ile razy wykona się nadpisana metoda), popraw kod. Jeśli Twój kod jest z nimi zgodny, "
-    "zostaw go. Potem napisz pełną odpowiedź od nowa.")
+    "zostaw go. Wzorce służą WYŁĄCZNIE do sprawdzenia Twojego kodu: nie opisuj ich, nie oceniaj ich zgodności "
+    "z dokumentacją i nie dodawaj kodu, o który użytkownik nie prosił. Potem napisz od nowa pełną odpowiedź "
+    "na pytanie użytkownika:\n«{question}»")
 
 
 # ---------------------------------------------------------------- od 1.8.1
@@ -259,7 +263,7 @@ NOTE_GLOBAL_OWNERS = ("\n[Metody klas o tej samej nazwie (to NIE jest funkcja gl
                       "żeby z nich korzystać): {owners}]")                                         # {owners} (od 1.8.5)
 NOTE_PARENTS = (                      # {name} {path} {chain} {bk} {members} {first}
     "\n[Uzupełnienie asystenta: dane api_search mają dla {name} błędną hierarchię ({bk}); linie 'Inherits from', "
-    "'Direct subclasses' i metody dziedziczone powyżej mogą być niepełne lub mylące. Deklaracja w pliku gry {path}: "
+    "'Direct subclasses' i metody dziedziczone powyżej mogą być niepełne lub mylące. Prawdziwa hierarchia (źródło: {path}): "
     "{chain}. Metody klas bazowych (same nazwy):\n{members}\n"
     "Pełne sygnatury: api_search(query='{first}', type='class', limit=1).]")
 API_GAME_INSTANCE = "{cls}.{meth}: to metoda obiektu gry - wywołuj ją przez GetGame().{meth}(...)"   # {cls} {meth}
@@ -293,13 +297,46 @@ TOOL_CONTENT_SEARCH = (               # {name}
     "a tekst w znanym pliku przez game_read(path='...', query='tekst'). Wywołanie nie zużyło limitu.")
 HINT_QUOTE_FIX = (                    # {problems}
     "[Uwaga systemowa] Cytaty w Twojej odpowiedzi nie zgadzają się z odczytanymi plikami: {problems}. "
-    "Kod oznaczony jako z gry przepisz DOSŁOWNIE z wyniku game_read albo oznacz go jako szkic. Numery linii podawaj "
+    "Kod oznaczony jako z gry przepisz DOSŁOWNIE z wyniku game_read albo napisz przy nim, że to szkic. Numery linii podawaj "
     "tylko z widoku pliku (game_read z line_start/line_end albo query); w przeciwnym razie je usuń.")
 QUOTE_LINES_NOT_SEEN = ("numery linii {refs} nie pochodzą z żadnego widoku pliku w tej rozmowie "
-                        "(game_read nie numeruje linii)")                                            # {refs}
+                        "(game_read nie numeruje linii; w treści oznaczone ⚠)")                                            # {refs}
 
 
 # ---------------------------------------------------------------- od 1.8.6
 API_DECL_NO_IMPLICIT = "{meth}() w {cls}: brak metody {meth} w {target} i jej klasach bazowych (wywołanie bez obiektu)"  # {meth} {cls} {target}
 QUESTION_FILES_NOTE = ("\n\n[Silnik: pliki gry o nazwach wymienionych w pytaniu (dokładna nazwa pliku z asset_search): "
                        "{files}. Zacznij od nich (game_read).]")                                      # {files}
+
+
+# ---------------------------------------------------------------- od 1.8.7
+# Prefiks SCR_ należy do kodu gry (Bohemia); nowe klasy moda mają własny tag (wiki: Scripting: Conventions).
+API_SCR_TAG_CLASS = ("class {cls}: prefiks SCR_ to prefiks klas gry (Bohemia), a to nowa klasa moda - "
+                     "użyj własnego tagu moda (np. TAG_{rest})")                                    # {cls} {rest}
+API_SCR_TAG_TEXT = ("odpowiedź zaleca prefiks SCR_ dla klas moda, a SCR_ to prefiks gry (Bohemia); "
+                    "mod używa własnego, unikalnego tagu (np. TAG_)")
+API_RETURN_TYPE = ("{decl}: {meth}() zwraca {ret} (wyniki narzędzi), a wynik jest przypisany do typu {typ}")  # {decl} {meth} {ret} {typ}
+SYNTAX_PREFAB_JSON = ("wpis prefabu (.et) zapisany jako JSON - pliki .et nie są JSON-em; format wpisu: "
+                      "Klasa \"{GUID}\" { Pole wartość }, tak jak w odczytanym Weapon_Base.et")
+# Oznaczenia w treści odpowiedzi, gdy problem przetrwał rundę poprawek (od 1.8.7: nie tylko stopka pod odpowiedzią).
+MARK_QUOTE_BLOCK = ("> ⚠ **Uwaga silnika:** tego fragmentu nie znaleziono w pliku `{path}` - to NIE jest dosłowny "
+                    "cytat z gry.\n\n")                                                              # {path}
+MARK_SYNTAX_BLOCK = "> ⚠ **Uwaga silnika:** {problem}\n\n"                                         # {problem}
+MARK_LINE_REF = " ⚠"                       # od 1.9.4 krótko; znaczenie wyjaśnia stopka weryfikatora
+
+
+# ---------------------------------------------------------------- od 1.8.8
+DOC_HIERARCHY_SOURCE = "dokumentacja API Workbencha (hierarchy.html)"
+NOTE_SUBCLASSES = ("\n[Uzupełnienie asystenta: lista 'Direct subclasses' powyżej jest dla {name} błędna. "
+                   "Bezpośrednie podklasy według dokumentacji API Workbencha: {subs}.]")      # {name} {subs}
+NOTE_SEARCH_MISS_FILE = ("\n[Silnik: api_search nie zna '{name}', ale w plikach gry jest plik o dokładnie tej nazwie: {files}. "
+                         "Odczytaj go (game_read), zanim napiszesz, że {name} nie istnieje.]")       # {name} {files}
+SYNTAX_PRINTFORMAT = ("PrintFormat używa znaczników %1..%9 (np. PrintFormat(\"x: %1\", x)), nie %s/%d: "
+                      "`{line}`")                                                                    # {line}
+SYNTAX_ENTRY_CLASS = ("wpis w prefabie używa klasy {entry}, a nowa klasa w skrypcie to {cls} - "
+                      "nazwa klasy we wpisie .et musi być taka sama jak w skrypcie")                 # {entry} {cls}
+MARK_UNREAD_BLOCK = ("> ⚠ **Uwaga silnika:** pliku `{path}` asystent w tej rozmowie nie odczytał - ten fragment NIE jest "
+                     "potwierdzonym cytatem z gry.\n\n")                                            # {path}
+MARK_API_BLOCK = "> ⚠ **Uwaga silnika:** {problem}\n\n"                                            # {problem}
+NOTE_GLOBAL_DECL = ("\n[Silnik: deklaracja funkcji globalnej '{name}' z pliku gry {path} (dosłowny fragment, "
+                    "możesz go cytować z nazwą pliku):\n```c\n{decl}\n```]")                         # {name} {path} {decl}

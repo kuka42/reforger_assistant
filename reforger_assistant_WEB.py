@@ -29,6 +29,7 @@ from urllib.parse import urlsplit
 import webbrowser
 
 import reforger_assistant_MCP_BK as engine
+import reforger_paths as paths
 
 BASE = Path(__file__).resolve().parent
 HTML = BASE / "assistant.html"
@@ -103,8 +104,9 @@ def as_public_session(session: dict, detail: bool = False) -> dict:
 
 
 class Application:
-    def __init__(self, mcp: engine.MCPStdioClient, model: str, num_ctx: int):
-        self.mcp = mcp
+    def __init__(self, mcp: engine.MCPStdioClient | None, model: str, num_ctx: int, setup_error: str = ""):
+        self.mcp = mcp                   # None = tryb konfiguracji (BK się nie uruchomił; od 1.9.0)
+        self.setup_error = setup_error
         self.model = model
         self.num_ctx = num_ctx
         self.lock = threading.RLock()
@@ -247,10 +249,49 @@ class Application:
 
     @staticmethod
     def _save_settings(payload: dict) -> None:
-        SETTINGS_STORE.parent.mkdir(parents=True, exist_ok=True)
-        temp = SETTINGS_STORE.with_suffix(".tmp")
-        temp.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
-        temp.replace(SETTINGS_STORE)
+        # Od 1.9.0 zapis z zachowaniem innych kluczy (ścieżki ustawione w interfejsie).
+        paths.write_settings({k: v for k, v in payload.items() if k != "version"})
+
+    # ---------------------------------------------------------------- ścieżki (od 1.9.0; działają od restartu)
+    def get_paths(self) -> dict:
+        saved = paths.saved_paths()
+        active = {"mcp_script": engine.MCP_SCRIPT, "game_path": engine.GAME_PATH, "docs_path": engine.DOCS_PATH}
+        fields = {}
+        for key, (env_name, label) in paths.PATH_FIELDS.items():
+            source = engine.PATH_SOURCES.get(key, "default")
+            fields[key] = {"label": label, "env": env_name, "active": active[key],
+                           "source": source, "source_label": paths.SOURCE_LABELS.get(source, "automatycznie obok gry"),
+                           "saved": saved.get(key, ""), "locked": source == "env"}
+        # Restart potrzebny, gdy zapisana ścieżka różni się od tej, z którą silnik wystartował (i nie wygrywa env).
+        pending = [k for k, f in fields.items()
+                   if not f["locked"] and (f["saved"] or "") != (active[k] if f["source"] == "settings" else "")]
+        return {"fields": fields, "restart_needed": bool(pending), "setup_mode": self.mcp is None,
+                "setup_error": self.setup_error}
+
+    @staticmethod
+    def _path_values(data: dict) -> dict[str, str]:
+        values = {}
+        for key in paths.PATH_FIELDS:
+            try:
+                values[key] = paths.clean_path(data.get(key, ""))
+            except ValueError as exc:
+                raise UserError(400, f"{key}: {exc}") from exc
+        return values
+
+    def check_paths(self, data: dict) -> dict:
+        return {"checks": paths.check_all(self._path_values(data))}
+
+    def save_paths(self, data: dict) -> dict:
+        values = self._path_values(data)
+        checks = paths.check_all(values)
+        try:
+            with self.lock:
+                paths.write_settings({"paths": {k: v for k, v in values.items() if v}})
+        except OSError as exc:
+            raise UserError(500, f"Nie udało się zapisać ustawień: {exc}") from exc
+        result = self.get_paths()
+        result["checks"] = checks
+        return result
 
     def list_sessions(self) -> list[dict]:
         with self.lock:
@@ -289,6 +330,9 @@ class Application:
             self._save_locked()
 
     def submit(self, sid: str, question: str) -> dict:
+        if self.mcp is None:
+            raise UserError(503, "Asystent jest w trybie konfiguracji: ustaw ścieżki (przycisk „ścieżki” u góry), "
+                                 "zapisz i uruchom asystenta ponownie.")
         question = question.strip()
         if not question or len(question) > MAX_QUESTION_LENGTH:
             raise UserError(400, f"Wiadomość musi mieć 1–{MAX_QUESTION_LENGTH} znaków")
@@ -472,8 +516,11 @@ def make_handler(app: Application, port: int):
                 self._json(200, app.list_models())
             elif path == "/api/bootstrap":
                 self._json(200, {"version": engine.VERSION, "model": app.model, "settings": app.get_settings(),
-                                 "tools": list(app.mcp.tools), "sessions": app.list_sessions(),
-                                 "status": "connected", "read_only": True})
+                                 "tools": list(app.mcp.tools) if app.mcp else [], "sessions": app.list_sessions(),
+                                 "status": "connected" if app.mcp else "setup", "setup_error": app.setup_error,
+                                 "read_only": True})
+            elif path == "/api/paths":
+                self._json(200, app.get_paths())
             elif path.startswith("/api/sessions/"):
                 self._json(200, app.get_session(path.removeprefix("/api/sessions/")))
             elif path.startswith("/api/jobs/"):
@@ -484,6 +531,10 @@ def make_handler(app: Application, port: int):
         def _dispatch_post(self, path: str, data: dict) -> None:
             if path == "/api/settings":
                 self._json(200, app.update_settings(data))
+            elif path == "/api/paths/check":
+                self._json(200, app.check_paths(data))
+            elif path == "/api/paths":
+                self._json(200, app.save_paths(data))
             elif path == "/api/sessions":
                 self._json(201, app.create_session())
             elif path.startswith("/api/sessions/") and path.endswith("/chat"):
@@ -574,31 +625,44 @@ def main() -> int:
         print(f"Brak {HTML.name} w folderze {BASE}", file=sys.stderr)
         return 1
     print("REFORGER ASSISTANT WEB | MCP BK tylko do odczytu | silnik", engine.VERSION)
+    model, num_ctx, source = resolve_startup_settings(args.model, args.num_ctx, load_saved_settings())
     try:
-        with engine.MCPStdioClient() as mcp:
-            print("Połączono z BK:", ", ".join(mcp.tools))
-            model, num_ctx, source = resolve_startup_settings(args.model, args.num_ctx, load_saved_settings())
-            print(f"Model: {model} | kontekst: {num_ctx} ({source})")
-            app = Application(mcp, model, num_ctx)
-            try:
-                server = ThreadingHTTPServer(("127.0.0.1", args.port), make_handler(app, args.port))
-                server.daemon_threads = True
-                url = f"http://127.0.0.1:{args.port}"
-                print("Otwórz:", url)
-                print("Zatrzymaj serwer: Ctrl+C. Historia: assistant_web_data/conversations.json")
-                if not args.no_browser:
-                    threading.Timer(0.45, lambda: webbrowser.open(url)).start()
-                try:
-                    server.serve_forever(poll_interval=0.3)
-                except KeyboardInterrupt:
-                    print("\nZamykanie serwera...")
-                finally:
-                    server.server_close()
-            finally:
-                app.close()
+        mcp_context = engine.MCPStdioClient()
+        mcp = mcp_context.__enter__()
+        setup_error = ""
+        print("Połączono z BK:", ", ".join(mcp.tools))
     except (engine.MCPError, OSError) as exc:
+        # Od 1.9.0: zła ścieżka BK albo gry nie kończy programu. Serwer startuje w trybie konfiguracji,
+        # a interfejs od razu pokazuje formularz ścieżek.
+        mcp_context = mcp = None
+        setup_error = str(exc)
+        print(f"BŁĄD BK: {exc}", file=sys.stderr)
+        print("TRYB KONFIGURACJI: ustaw ścieżki w przeglądarce (przycisk „ścieżki”), zapisz i uruchom asystenta ponownie.")
+    try:
+        print(f"Model: {model} | kontekst: {num_ctx} ({source})")
+        app = Application(mcp, model, num_ctx, setup_error)
+        try:
+            server = ThreadingHTTPServer(("127.0.0.1", args.port), make_handler(app, args.port))
+            server.daemon_threads = True
+            url = f"http://127.0.0.1:{args.port}"
+            print("Otwórz:", url)
+            print("Zatrzymaj serwer: Ctrl+C. Historia: assistant_web_data/conversations.json")
+            if not args.no_browser:
+                threading.Timer(0.45, lambda: webbrowser.open(url)).start()
+            try:
+                server.serve_forever(poll_interval=0.3)
+            except KeyboardInterrupt:
+                print("\nZamykanie serwera...")
+            finally:
+                server.server_close()
+        finally:
+            app.close()
+    except OSError as exc:
         print(f"BŁĄD: {exc}", file=sys.stderr)
         return 1
+    finally:
+        if mcp_context is not None:
+            mcp_context.__exit__(None, None, None)
     return 0
 
 

@@ -135,14 +135,12 @@ _LINE_REF = re.compile(r"\(\s*linia\s*~?\s*(\d+)|linii\s*~?\s*(\d+)\s*[-‑–]\
 
 
 def invented_line_numbers(text: str) -> bool:
-    """Numery linii w odpowiedzi. Od 1.8.4 nie liczymy tych, które odpowiedź pokazuje w przepisanym widoku
-    pliku ('75| ...'): pochodzą z lokalnego widoku (game_read z query/line_start) i są prawdziwe."""
-    shown = {int(n) for n in re.findall(r"^\s*(\d+)\|", text, re.M)}
-    for m in _LINE_REF.finditer(text):
-        start = int(next(g for g in m.groups() if g))
-        if start not in shown:
-            return True
-    return False
+    """Od 1.8.9: o numerach linii decyduje silnik. Sprawdza je per plik względem widoków, które model naprawdę
+    oglądał (game_read z line_start/line_end albo query), i oznacza niepotwierdzone w treści:
+    "⚠(numer linii niepotwierdzony)". Wcześniejsza heurystyka (każde "linia N" bez przepisanego widoku) dawała
+    fałszywe alarmy dla numerów potwierdzonych przez silnik. Odpowiedzi sprzed 1.8.7 nie mają oznaczeń."""
+    return ("numer linii niepotwierdzony" in text      # oznaczenie 1.8.7-1.9.3
+            or bool(re.search(r"lini\w*\s*\**\s*\d+(?:\s*[-‑–]\s*\d+)?\s*\**\s*⚠", text, re.I)))   # od 1.9.4: " ⚠"
 
 
 def default_as_inspection(text: str) -> bool:
@@ -175,7 +173,23 @@ COMMON_BAD = [
     ("operator ?. (nie widziałem go w Enforce Script - podejrzane)", rx(r"\)\s*\?\s*\.\s*\w")),
     ("'w pełni zweryfikowane' (nadmierna pewność)", rx(r"w pełni zweryfikowan")),
     ("numery linii w plikach (game_read ich nie zwraca - wymysł)", invented_line_numbers),
+    # od 1.8.7
+    ("rozumowanie modelu (po angielsku) w treści odpowiedzi", rx(r"\bWe need to (?:answer|show|provide|find)|Let's craft (?:the )?answer")),
+    ("wpis prefabu .et zapisany jako JSON", rx(r'"(?:ParentContextList|UIInfo|ContextName)"\s*:')),
+    ("nowa klasa moda z prefiksem SCR_ (prefiks gry)", rx(r"\bclass\s+SCR_(?:My|Log|Custom|Print|Example|Mod|Test)\w*")),
+    ("wywołanie z parametrem typu .Cast<T>() (nie istnieje w Enforce Script)", rx(r"\.\s*Cast\s*<\s*\w+\s*>\s*\(")),
+    # od 1.8.8
+    ("PrintFormat ze znacznikami %s/%d (Enforce Script używa %1..%9)", rx(r'PrintFormat\s*\(\s*"[^"\n]*%[sdifx]')),
 ]
+
+
+def entry_class_mismatch(text: str) -> bool:
+    """Wpis w .et z inną klasą niż nowa klasa w skrypcie tej samej odpowiedzi (TAG_X w skrypcie, SCR_X we wpisie)."""
+    new = set(re.findall(r"^\s*class\s+([A-Za-z_]\w*)\s*:", text, re.M))
+    for entry in re.findall(r'^\s*([A-Za-z_]\w*)\s+"\{', text, re.M):
+        if entry not in new and any(c != entry and c.split("_", 1)[-1] == entry.split("_", 1)[-1] for c in new):
+            return True
+    return False
 
 
 # ---------------------------------------------------------------------------------------------
@@ -250,6 +264,7 @@ TESTS = [
                     ("'default' jako 'tryb inspekcji'", default_as_inspection),
                     ("log opisany jako serwerowy (akcja ma efekt lokalny)",
                      rx(r"(Logujemy|wypisze|Print)[^\n]{0,80}(na serwerze|konsol\w+ serwera)|(na serwerze|konsol\w+ serwera)[^\n]{0,80}Print")),
+                    ("klasa we wpisie .et inna niż klasa w skrypcie", entry_class_mismatch),
                 ],
             },
         ],
@@ -273,6 +288,8 @@ TESTS = [
                  rx(r"SCR_Autotest\w+\.Print\s*\(|Print[^\n]{0,40}z\s+klasy\s+`?SCR_Autotest")),
                 ("wymyślone API logowania", rx(r"\b(Debug\.Print|System\.Print|Log\.(Info|Debug|Warn)|printf\s*\(|console\.log|SCR_Log)")),
                 ("Log(prefix, level) klas UIInfo podane jako ogólne logowanie (to metoda instancji)", rx(r"\bSCR_\w+\.Log\s*\(")),
+                ("zaprzecza istnieniu poziomów logowania (jest enum LogLevel)",
+                 rx(r"nie ma wbudowan\w*\s+(?:mechanizm\w*\s+)?[„\"]?poziom|poziom\w* logowania nie są wbudowan|brak poziomów logowania")),
             ],
         }],
     },
@@ -397,7 +414,9 @@ TESTS = [
             "bad": [
                 ("wywołanie GetPrefabName() na encji (nie istnieje na IEntity)", entity_getprefabname_call),
                 ("encja rzutowana na GenericEntityClass (to klasa danych prefabu, nie encja)",
-                 rx(r"GenericEntityClass\s+\w+\s*=\s*(?:Class|GenericEntityClass)\.Cast\(\s*\w*[eE]ntity")),
+                 rx(r"GenericEntityClass\s+\w+\s*=\s*(?:(?:Class|GenericEntityClass)\.Cast\(\s*\w*[eE]ntity|\w*[eE]ntity\s*\.\s*Cast\s*<)")),
+                ("GetPrefab() przypisane do ResourceName (GetPrefab zwraca BaseContainer)",
+                 rx(r"ResourceName\s+\w+\s*=\s*[^;\n]*\.GetPrefab\s*\(\s*\)\s*;")),
             ],
         }],
     },
@@ -408,7 +427,7 @@ TESTS = [
         "rules": [{
             "must": [
                 ("informuje, że klasy nie znaleziono",
-                 rx(r"(nie (znaleziono|istnieje|ma|udało się (znaleźć|odnaleźć))|brak (takiej )?klas|nie występuje|nie jest zdefiniowan)")),
+                 rx(r"(nie (znaleziono|istnieje|ma|udało (mi )?się (znaleźć|odnaleźć))|brak (takiej )?klas|nie występuje|nie jest zdefiniowan)")),
             ],
             "bad": [
                 ("wymyślony plik SCR_WeaponLogManager.c (bez przeczenia)", invented_weaponlog_file),
@@ -649,6 +668,11 @@ def cmd_log(path: Path) -> None:
             "odrzucone wywołanie (bez limitu)": len(re.findall(r"Wywołanie nie zużyło limitu", body)),
             "pełny widok klasy (limit=1)": len(re.findall(r"pełny widok klasy", body)),
             "hierarchia z pliku gry [BAZA]": len(re.findall(r"\[BAZA\] \w+: klasy bazowe z pliku gry \S+ -> (?!nie ustalono)", body)),
+            # od 1.8.7
+            "rozumowanie przerwane": len(re.findall(r"rozumowanie przerwane", body)),
+            "wyciek rozumowania [ROZUMOWANIE]": len(re.findall(r"\[ROZUMOWANIE\] usunięto", body)),
+            "zapętlenie [POWTÓRZENIA]": len(re.findall(r"\[POWTÓRZENIA\]", body)),
+            "oznaczenia w treści [OZNACZENIA]": len(re.findall(r"\[OZNACZENIA\]", body)),
         }
         last = outs[-1] if outs else ("?", "?")
         print(f"Tura {i}: wywołań MCP {calls}, błędów {errors}, "

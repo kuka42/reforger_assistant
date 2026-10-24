@@ -160,8 +160,8 @@ EMERGENCY_CODE_CAP = 12000               # ile znaków kodu z odpowiedzi awaryjn
 # Wartość: krótka informacja dla modelu (pusty tekst = tylko ostrzeżenie).
 API_GLOBAL_FUNCTIONS = {
     "GetGame": "GetGame() zwraca obiekt gry ArmaReforgerScripted; jego metody wywołujesz jako GetGame().Metoda(...).",
-    "Print": "Opis i przykłady: wiki_search('Print').",
-    "PrintFormat": "Opis i przykłady: wiki_search('PrintFormat').",
+    "Print": "Deklarację z pliku gry silnik dopisuje poniżej (jeśli plik jest w danych gry).",
+    "PrintFormat": "Deklarację z pliku gry silnik dopisuje poniżej (jeśli plik jest w danych gry).",
 }
 # Klasy bazowe nieznane danym API BK (prawie połowa klas Arma ma pustą listę rodziców): silnik odczytuje
 # deklarację klasy z pliku gry (asset_search + game_read) i uzupełnia łańcuch dziedziczenia.
@@ -202,3 +202,34 @@ VERIFY_NO_FIX_MARKERS = ("nie sąsiadują",)
 # ---------------------------------------------------------------- od 1.8.6
 QUESTION_FILES_MAX = 4           # ile nazw z pytania silnik sprawdza w asset_search przed pierwszą odpowiedzią modelu
 QUESTION_NAME_RE = r"\b([A-Z][A-Za-z0-9]*_[A-Za-z0-9_]+|[A-Z][a-z0-9]+(?:[A-Z][a-z0-9]+){2,})\b"   # SCR_X, Weapon_Base, ScriptedUserAction
+
+
+# ---------------------------------------------------------------- od 1.8.7
+# Rozumowanie modelu, które wyciekło do treści odpowiedzi (gpt-oss bez osobnego pola thinking).
+REASONING_LEAK_START_RE = r"^\s*(?:We need to|We have|We should|We must|Let's|Let us|The user|User asks|I need to|Need to)\b"
+REASONING_LEAK_MARKERS_RE = r"\b(?:We need|We should|We have|We must|Let's|We can|We might|Thus|So we)\b"
+# Ile razy ten sam wiersz tabeli / linia tekstu może się powtórzyć, zanim silnik uzna to za zapętlenie.
+REPEAT_LINE_MAX = 2
+# Zalecanie SCR_ jako prefiksu własnego moda (w prozie).
+SCR_TAG_TEXT_RE = (r"(?:prefiks\w*|tag\w*)\s*[:`*]*\s*`?SCR_`?\s*\+|`?SCR_`?\s*\+\s*(?:własn|tag|nazw)"
+                   r"|(?:tag|prefiks)[^\n]{0,80}\(np\.\s*`?SCR_`?\s*[,)]"
+                   r"|(?:używaj|użyj|stosuj|zacznij)\w*\s+(?:od\s+)?(?:prefiksu\s+)?`?SCR_`?\s*(?:\+|jako|dla)")
+# Typy wartości Enforce Script (do kontroli typu zwracanego przy przypisaniu).
+VALUE_TYPES = ("int", "float", "bool", "string", "vector", "ResourceName")
+VALUE_TYPE_COMPAT = (("int", "float"), ("float", "int"), ("string", "ResourceName"), ("ResourceName", "string"))
+
+
+# ---------------------------------------------------------------- od 1.8.8
+# Zastój (rundy bez nowych danych): koniec wyszukiwania po STALL_STOP_ROUNDS rundach, ale tylko gdy model wykonał już
+# STALL_STOP_MIN_CALLS wywołań MCP; bez tego warunku dopiero po STALL_STOP_ROUNDS_HARD rundach.
+STALL_STOP_ROUNDS = 4
+STALL_STOP_ROUNDS_HARD = 6
+STALL_STOP_MIN_CALLS = 8
+
+
+# ---------------------------------------------------------------- od 1.9.2
+# Pliki gry z deklaracjami funkcji globalnych (nazwa pliku bez .c; ścieżkę silnik znajduje sam przez asset_search).
+# Potwierdzone przez użytkownika w Workbenchu: Print i PrintFormat są w EnDebug.c.
+GLOBAL_FUNCTION_FILES = {"Print": "EnDebug", "PrintFormat": "EnDebug"}
+# Przykładowe nazwy klas/plików moda z prefiksem gry w tekście odpowiedzi (od 1.9.3).
+SCR_EXAMPLE_NAME_RE = r"`(?:class\s+)?SCR_(?:My|Example|Mod|Custom|Test)\w*(?:\.c)?`"

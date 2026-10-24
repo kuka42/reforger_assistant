@@ -38,6 +38,8 @@ try:
         VERSION,
         MCP_SCRIPT,
         GAME_PATH,
+        DOCS_PATH,
+        PATH_SOURCES,
         _env_int,
         _env_float,
         OLLAMA_URL,
@@ -58,6 +60,8 @@ try:
         OLLAMA_TIMEOUT,
         OLLAMA_TEMPERATURE,
         OLLAMA_THINK,
+        OLLAMA_STREAM,
+        THINK_ABORT_TOKENS,
         THINKING_KEEP_CHARS,
         VIEW_LIMIT_PER_FILE,
         VERIFY_MODE,
@@ -90,6 +94,10 @@ try:
         COMPILE_PROJECT,
         HINT_SYNTAX_FIX,
         FOOTER_SYNTAX,
+        NOTE_SUBCLASSES,
+        NOTE_SEARCH_MISS_FILE,
+        NOTE_GLOBAL_DECL,
+        DOC_HIERARCHY_SOURCE,
         TOOL_ACTION_BLOCKED,
         SYSTEM_PROMPT,
         EMERGENCY_PLACEHOLDER,
@@ -122,6 +130,10 @@ try:
         API_GLOBAL_FUNCTIONS,
         GAME_BROWSE_PATTERN_RE,
         CONTENT_SEARCH_ALIASES,
+        STALL_STOP_ROUNDS,
+        GLOBAL_FUNCTION_FILES,
+        STALL_STOP_ROUNDS_HARD,
+        STALL_STOP_MIN_CALLS,
         QUESTION_FILES_MAX,
         QUESTION_NAME_RE,
         VERIFY_NO_FIX_MARKERS,
@@ -214,6 +226,10 @@ try:
         _quote_problems,
         _decl_target,
         _class_known,
+        _strip_leaked_reasoning,
+        _collapse_repeats,
+        _annotate_answer,
+        _sync_entry_classes,
     )
     from reforger_mcp import (  # noqa: F401
         MCPError,
@@ -227,6 +243,24 @@ except ImportError as _exc:
 
 
 print(config_summary(), flush=True)
+_SRC = {"env": "zmienna", "settings": "interfejs", "default": "domyślna", "auto": "obok gry"}
+print(f"[ŚCIEŻKI] BK: {MCP_SCRIPT} ({_SRC.get(PATH_SOURCES['mcp_script'])}); gra: {GAME_PATH} "
+      f"({_SRC.get(PATH_SOURCES['game_path'])}); docs: {DOCS_PATH} ({_SRC.get(PATH_SOURCES['docs_path'])})", flush=True)
+
+# Od 1.8.8: hierarchia klas z lokalnej dokumentacji API Workbencha (Arma Reforger Tools). Tylko odczyt z dysku.
+try:
+    from reforger_docs import DocHierarchy, docs_dir
+    DOCS = DocHierarchy().load(docs_dir(GAME_PATH, DOCS_PATH))
+except Exception as _exc:  # dokumentacja jest opcjonalna; jej brak nigdy nie blokuje startu
+    DOCS = None
+    print(f"[DOKUMENTACJA] hierarchia klas pominięta z powodu błędu: {_exc!r}", flush=True)
+else:
+    if DOCS:
+        print(f"[DOKUMENTACJA] hierarchia klas z dokumentacji Workbench: {'; '.join(DOCS.sources)}", flush=True)
+    else:
+        print(f"[DOKUMENTACJA] brak plików hierarchy.html ({docs_dir(GAME_PATH, DOCS_PATH)}); "
+              "klasy bazowe tylko z plików gry. Folder docs ustawisz w interfejsie (przycisk „ścieżki”) albo zmienną REFORGER_DOCS_PATH.",
+              flush=True)
 
 
 def _trim_thinking(assistant: dict) -> None:
@@ -702,6 +736,13 @@ def _ancestors(mcp, meta: dict, name: str) -> tuple[list[str], str]:
     Limit nowych klas na turę: meta['resolve_budget']; wynik (także pusty) zostaje w pamięci podręcznej."""
     if name in _PARENT_CACHE:
         return _PARENT_CACHE[name]
+    if DOCS and DOCS.knows(name):
+        # Od 1.8.8: dokumentacja API Workbencha zna całe drzewo (bez wywołań MCP i bez limitu na turę).
+        chain = DOCS.chain(name, PARENT_RESOLVE_DEPTH)
+        _PARENT_CACHE[name] = (chain, DOC_HIERARCHY_SOURCE)
+        print(f"  [BAZA] {name}: klasy bazowe z dokumentacji API -> {' : '.join(chain) or 'brak (klasa główna)'}",
+              flush=True)
+        return chain, DOC_HIERARCHY_SOURCE
     if meta.get("resolve_budget", 0) <= 0:
         return [], ""
     meta["resolve_budget"] -= 1
@@ -751,8 +792,19 @@ def _parents_note(mcp, meta: dict, query, raw: str) -> str:
         return ""
     _use_chain(meta, mcp, q, chain)
     bk = _bk_parent(section)
+    # Od 1.8.8: podklasy z dokumentacji. BK potrafi wpisać przodków jako "Direct subclasses"; lista BK bywa
+    # skrócona, więc za błąd uznajemy tylko klasę, której dokumentacja NIE podaje jako podklasy.
+    subs_note = ""
+    if DOCS and DOCS.knows(q):
+        m = re.search(r"^Direct subclasses:\s*(.+)$", section, re.M)
+        bk_subs = [x.strip() for x in m.group(1).split(",") if re.fullmatch(r"\w+", x.strip())] if m else []
+        doc_subs = DOCS.subclasses(q)
+        if any(x not in doc_subs for x in bk_subs):
+            shown = ", ".join(doc_subs[:PARENT_NOTE_MAX_NAMES]) + (
+                f" (+{len(doc_subs) - PARENT_NOTE_MAX_NAMES})" if len(doc_subs) > PARENT_NOTE_MAX_NAMES else "")
+            subs_note = NOTE_SUBCLASSES.format(name=q, subs=shown or "brak")
     if bk == chain[0]:
-        return ""                     # BK zgadza się z plikiem gry: nic nie dopisujemy
+        return subs_note              # klasa bazowa w BK się zgadza; ewentualnie tylko poprawka podklas
     seen = set(_member_names(section))
     lines = []
     for cls in chain:
@@ -764,7 +816,8 @@ def _parents_note(mcp, meta: dict, query, raw: str) -> str:
     note = NOTE_PARENTS.format(name=q, path=path or "?", chain=f"{q} : " + " : ".join(chain),
                                bk=(f"'Inherits from: {bk}'" if bk else "brak klasy bazowej"),
                                members="\n".join(lines) or "- (brak danych o metodach)", first=chain[0])
-    return note if len(note) <= PARENT_NOTE_CAP else note[:PARENT_NOTE_CAP - 40] + "\n[... lista skrócona]]"
+    note = note if len(note) <= PARENT_NOTE_CAP else note[:PARENT_NOTE_CAP - 40] + "\n[... lista skrócona]]"
+    return note + subs_note
 
 
 def _prepare_api_evidence(content: str, meta: dict, session_files: dict, mcp) -> None:
@@ -843,6 +896,70 @@ def _final_check_footer(content: str, meta: dict, session_files: dict, mcp, wher
         FOOTER_SYNTAX.format(problems="; ".join(syntax)) if syntax else "")
 
 
+_EXACT_FILES: dict[str, list[str]] = {}
+
+
+def _exact_game_files(mcp, name: str) -> list[str]:
+    """Pliki gry o DOKŁADNIE takiej nazwie (bez rozszerzenia) jak name: .c, .et, .conf, .layout (asset_search)."""
+    if name in _EXACT_FILES:
+        return _EXACT_FILES[name]
+    listing = _raw_text(mcp.call_tool("asset_search", {"query": name, "type": "any", "limit": 10}))
+    paths = [re.sub(r"^\{[0-9A-Fa-f]{16}\}", "", m.group(1)) for m in re.finditer(r"^\s{2,}(\S+/\S+)\s*$", listing, re.M)]
+    exact = [p for p in paths if p.rsplit("/", 1)[-1].rsplit(".", 1)[0].lower() == name.lower()
+             and p.rsplit(".", 1)[-1].lower() in ("c", "et", "conf", "layout")]
+    _EXACT_FILES[name] = exact
+    return exact
+
+
+_GLOBAL_DECLS: dict[str, tuple[str, str, str]] = {}      # funkcja -> (ścieżka, deklaracja, pełny tekst pliku)
+
+
+def _global_decl(mcp, name: str) -> tuple[str, str, str]:
+    """Od 1.9.2: deklaracja funkcji globalnej (np. Print, PrintFormat) z pliku gry wskazanego w GLOBAL_FUNCTION_FILES.
+    BK nie przeszukuje treści plików, więc model sam jej nie znajdował (test B: brak PrintFormat i %1).
+    Ścieżkę silnik ustala przez asset_search (dokładna nazwa pliku), deklarację czyta z game_read."""
+    if name in _GLOBAL_DECLS:
+        return _GLOBAL_DECLS[name]
+    out = ("", "", "")
+    stem = GLOBAL_FUNCTION_FILES.get(name)
+    if stem and "game_read" in getattr(mcp, "tools", {}):
+        for path in [p for p in _exact_game_files(mcp, stem) if p.lower().endswith(".c")][:2]:
+            result = mcp.call_tool("game_read", {"path": path})
+            if result.get("isError"):
+                continue
+            text = _raw_text(result)
+            lines = text.split("\n")
+            idx = next((i for i, ln in enumerate(lines) if re.search(rf"\bproto\b[^\n(]*\b{re.escape(name)}\s*\(", ln)), None)
+            if idx is None:
+                continue
+            start = idx                       # komentarz dokumentujący tuż nad deklaracją (//! albo /*! ... */)
+            if idx > 0 and lines[idx - 1].strip().endswith("*/"):
+                opener = next((j for j in range(idx - 1, max(-1, idx - 25), -1) if "/*" in lines[j]), None)
+                if opener is not None:
+                    start = opener
+            else:
+                while start > 0 and idx - start < 10 and lines[start - 1].strip().startswith("//"):
+                    start -= 1
+            out = (path, "\n".join(lines[start:idx + 1]).strip(), text)
+            break
+    _GLOBAL_DECLS[name] = out
+    print(f"  [GLOBALNA] {name}: {('deklaracja z ' + out[0]) if out[0] else 'nie znaleziono pliku z deklaracją'}", flush=True)
+    return out
+
+
+def _search_miss_file_note(mcp, query) -> str:
+    """Od 1.8.8: api_search nie zna nazwy (np. enum LogLevel), a w grze jest plik o dokładnie takiej nazwie
+    (scripts/Core/generated/Debug/LogLevel.c). Test B: model uznał wtedy, że poziomów logowania nie ma."""
+    q = _norm_query(query)
+    if not re.fullmatch(r"[A-Z][A-Za-z0-9_]{2,}", q or "") or "asset_search" not in getattr(mcp, "tools", {}):
+        return ""
+    files = [p for p in _exact_game_files(mcp, q) if p.lower().endswith(".c")]
+    if not files:
+        return ""
+    print(f"  [PLIK] api_search bez trafienia dla '{q}', ale jest plik gry: {', '.join(files[:2])}", flush=True)
+    return NOTE_SEARCH_MISS_FILE.format(name=q, files=", ".join(files[:2]))
+
+
 def _question_files_note(question: str, mcp) -> str:
     """Od 1.8.6: nazwy z pytania (np. Weapon_Base, SCR_ToggleSafetyUserAction), dla których w grze jest plik o DOKŁADNIE
     takiej nazwie, silnik podaje modelowi od razu (test A: pytanie o Weapon_Base, a model nie otworzył tego pliku).
@@ -852,10 +969,7 @@ def _question_files_note(question: str, mcp) -> str:
     names = list(dict.fromkeys(re.findall(QUESTION_NAME_RE, question or "")))[:QUESTION_FILES_MAX]
     found = []
     for name in names:
-        listing = _raw_text(mcp.call_tool("asset_search", {"query": name, "type": "any", "limit": 10}))
-        paths = [re.sub(r"^\{[0-9A-Fa-f]{16}\}", "", m.group(1)) for m in re.finditer(r"^\s{2,}(\S+/\S+)\s*$", listing, re.M)]
-        exact = [p for p in paths if p.rsplit("/", 1)[-1].rsplit(".", 1)[0].lower() == name.lower()
-                 and p.rsplit(".", 1)[-1].lower() in ("c", "et", "conf", "layout")]
+        exact = _exact_game_files(mcp, name)
         if exact:
             found.append(f"{name} -> {', '.join(exact[:2])}")
     print(f"  [PYTANIE] nazwy z pytania: {', '.join(names) or '-'}; pliki: {'; '.join(found) or 'brak dokładnych'}", flush=True)
@@ -1054,7 +1168,7 @@ def tool_text(result: dict, name: str = "", arguments: dict | None = None) -> st
 
 def ollama_chat(messages: list[dict], tools: list[dict], model: str, num_ctx: int, think: str | None = None) -> dict:
     messages = [{k: v for k, v in m.items() if not str(k).startswith("_")} for m in messages]
-    payload = {"model": model, "messages": messages, "stream": False,
+    payload = {"model": model, "messages": messages, "stream": bool(OLLAMA_STREAM),
                "options": {"temperature": OLLAMA_TEMPERATURE, "num_ctx": num_ctx}}
     if OLLAMA_NUM_PREDICT > 0:
         payload["options"]["num_predict"] = OLLAMA_NUM_PREDICT
@@ -1068,7 +1182,7 @@ def ollama_chat(messages: list[dict], tools: list[dict], model: str, num_ctx: in
     )
     try:
         with urllib.request.urlopen(request, timeout=OLLAMA_TIMEOUT) as response:
-            parsed = json.load(response)
+            parsed = _read_stream(response) if OLLAMA_STREAM else json.load(response)
     except urllib.error.HTTPError as exc:
         detail = exc.read(1000).decode("utf-8", "replace")
         raise RuntimeError(f"Ollama HTTP {exc.code}: {detail}") from exc
@@ -1078,11 +1192,78 @@ def ollama_chat(messages: list[dict], tools: list[dict], model: str, num_ctx: in
     if not isinstance(message, dict):
         raise RuntimeError("Ollama nie zwróciła pola message")
     message = dict(message)
+    if not message.get("tool_calls") and isinstance(message.get("content"), str) and message["content"]:
+        message["content"] = _clean_answer_text(message["content"])
     # Metadane diagnostyczne nie sa przekazywane z powrotem do API Ollamy.
     message["_done_reason"] = parsed.get("done_reason", "")
     message["_prompt_eval_count"] = parsed.get("prompt_eval_count")
     message["_eval_count"] = parsed.get("eval_count")
     return message
+
+
+def _read_stream(response) -> dict:
+    """Od 1.8.7: odpowiedź Ollamy w trybie stream (NDJSON). Składa treść, rozumowanie i tool_calls w jedną
+    wiadomość jak przy stream=false. Gdy samo rozumowanie przekroczy THINK_ABORT_TOKENS, a tekstu odpowiedzi
+    i wywołań narzędzi jeszcze nie ma, przerywa generację (done_reason=length, pusta treść): silnik ma już
+    na to ścieżkę (ponowienie z niskim rozumowaniem), a nie czeka minutami do num_predict."""
+    content: list[str] = []
+    thinking: list[str] = []
+    tool_calls: list = []
+    role = "assistant"
+    think_chunks = 0
+    last: dict = {}
+    for raw in response:
+        raw = raw.strip()
+        if not raw:
+            continue
+        try:
+            chunk = json.loads(raw)
+        except ValueError:
+            continue
+        if chunk.get("error"):
+            raise RuntimeError(f"Ollama: {chunk['error']}")
+        msg = chunk.get("message") or {}
+        role = msg.get("role") or role
+        if msg.get("content"):
+            content.append(msg["content"])
+        if msg.get("thinking"):
+            thinking.append(msg["thinking"])
+            think_chunks += 1
+        if msg.get("tool_calls"):
+            tool_calls.extend(msg["tool_calls"])
+        if chunk.get("done"):
+            last = chunk
+            break
+        if (THINK_ABORT_TOKENS > 0 and think_chunks >= THINK_ABORT_TOKENS
+                and not tool_calls and not "".join(content).strip()):
+            print(f"  [OLLAMA] rozumowanie przerwane po ~{think_chunks} tokenach bez tekstu odpowiedzi "
+                  f"(próg REFORGER_THINK_ABORT={THINK_ABORT_TOKENS})", flush=True)
+            last = {"done_reason": "length", "eval_count": think_chunks, "_aborted": True}
+            break
+    message = {"role": role, "content": "".join(content)}
+    if thinking:
+        message["thinking"] = "".join(thinking)
+    if tool_calls:
+        message["tool_calls"] = tool_calls
+    return {"message": message, "done_reason": last.get("done_reason", ""),
+            "prompt_eval_count": last.get("prompt_eval_count"), "eval_count": last.get("eval_count")}
+
+
+def _clean_answer_text(text: str) -> str:
+    """Od 1.8.7: rozumowanie, które wyciekło do treści, i zapętlone powtórzenia wierszy."""
+    try:
+        text, cut = _strip_leaked_reasoning(text)
+        if cut:
+            print(f"  [ROZUMOWANIE] usunięto z treści odpowiedzi wyciek rozumowania modelu: {cut} zn.", flush=True)
+        text, rep = _collapse_repeats(text)
+        if rep:
+            print(f"  [POWTÓRZENIA] usunięto {rep} powtórzonych linii (zapętlenie modelu)", flush=True)
+        text, renamed = _sync_entry_classes(text)
+        for old_name, new_name in renamed:
+            print(f"  [AUTOPOPRAWKA] wpis .et: klasa {old_name} -> {new_name} (jak nowa klasa w skrypcie)", flush=True)
+    except Exception as exc:  # porządkowanie nigdy nie psuje odpowiedzi
+        print(f"  [ROZUMOWANIE] porządkowanie pominięte z powodu błędu: {exc!r}", flush=True)
+    return text
 
 
 def prune_history(messages: list[dict]) -> None:
@@ -1198,21 +1379,37 @@ def _finish_without_tools(question: str, messages: list[dict], model: str, num_c
     content = _final_without_tools(messages, model, num_ctx, hint, thinks, cause)
     if content and VERIFY_MODE == "fix":
         # Od 1.8.5: także ta odpowiedź przechodzi kontrolę cytatów; poprawka (bez narzędzi) tylko, gdy jest lepsza.
-        try:
-            quote = _quote_problems(content, meta, session_files)
-        except Exception as exc:  # kontrola nigdy nie psuje odpowiedzi
-            print(f"  [VERIFY] kontrola cytatów pominięta z powodu błędu: {exc!r}", flush=True)
-            quote = []
-        if quote:
-            print("  [VERIFY] do poprawki (bez narzędzi): " + "; ".join(quote), flush=True)
-            draft = [{"role": "assistant", "content": content},
-                     {"role": "user", "content": HINT_QUOTE_FIX.format(problems="; ".join(quote))}]
-            second = _final_without_tools(messages + draft[:1], model, num_ctx, draft[1]["content"], (None,), "cytaty")
-            if second and len(_quote_problems(second, meta, session_files)) < len(quote):
-                print("  [SZKIC] poprawka cytatów bez narzędzi przyjęta", flush=True)
+        # Od 1.8.7: oprócz cytatów także kontrola API (enumy, typy, SCR_) i składni - jedna poprawka bez narzędzi.
+        def problems_of(text: str) -> tuple[list, list, list]:
+            try:
+                quote = _quote_problems(text, meta, session_files)
+            except Exception as exc:  # kontrola nigdy nie psuje odpowiedzi
+                print(f"  [VERIFY] kontrola cytatów pominięta z powodu błędu: {exc!r}", flush=True)
+                quote = []
+            api, syntax = [], []
+            if API_CHECK_MODE == "fix":
+                try:
+                    _prepare_api_evidence(text, meta, session_files, mcp)
+                    api = _api_problems(text, meta, session_files)
+                    syntax = _syntax_problems(text)
+                except Exception as exc:  # j.w.
+                    print(f"  [API] kontrola (bez narzędzi) pominięta z powodu błędu: {exc!r}", flush=True)
+            return quote, api, syntax
+
+        quote, api, syntax = problems_of(content)
+        if quote or api or syntax:
+            print("  [VERIFY] do poprawki (bez narzędzi): " + "; ".join(quote + api + syntax), flush=True)
+            hint = "\n\n".join(([HINT_API_FIX.format(problems="; ".join(api))] if api else [])
+                               + ([HINT_SYNTAX_FIX.format(problems="; ".join(syntax))] if syntax else [])
+                               + ([HINT_QUOTE_FIX.format(problems="; ".join(quote))] if quote else []))
+            draft = [{"role": "assistant", "content": content}, {"role": "user", "content": hint}]
+            reason = " + ".join(r for r, on in (("cytaty", quote), ("API", api), ("składnia", syntax)) if on)
+            second = _final_without_tools(messages + draft[:1], model, num_ctx, hint, ("low",), reason)
+            if second and sum(map(len, problems_of(second))) < len(quote) + len(api) + len(syntax):
+                print("  [SZKIC] poprawka bez narzędzi przyjęta", flush=True)
                 content = second
             else:
-                print("  [SZKIC] poprawka cytatów bez narzędzi nie jest lepsza - zostaje pierwsza wersja", flush=True)
+                print("  [SZKIC] poprawka bez narzędzi nie jest lepsza - zostaje pierwsza wersja", flush=True)
     if content:
         footer = (FOOTER_STOPPED.format(cause=cause) if stopped else "") + _final_check_footer(
             content, meta, session_files, mcp, "bez narzędzi")
@@ -1227,6 +1424,13 @@ def _finish_without_tools(question: str, messages: list[dict], model: str, num_c
     compact_finished_history(messages)
     phase("Odpowiedź gotowa (synteza awaryjna)")
     return content + footer
+
+
+def _short_question(question: str, cap: int = 600) -> str:
+    """Pytanie użytkownika do przypomnienia w podpowiedzi (od 1.9.1: test J - po podpowiedzi z wzorcami model
+    odpowiadał na podpowiedź, a nie na pytanie)."""
+    q = " ".join(str(question or "").split())
+    return q if len(q) <= cap else q[:cap - 3] + "..."
 
 
 def _push_draft(messages: list[dict], content: str, hint: str, reason: str) -> None:
@@ -1252,6 +1456,18 @@ def ask(question: str, messages: list[dict], mcp: MCPStdioClient,
                 print(f"  [LINIE] końcowa odpowiedź: odwołań do numerów linii {refs}; numerów z widoków w rozmowie "
                       f"{seen_n}; niepotwierdzonych {bad_n}", flush=True)
         _log_verification(findings, checked, ok)
+        if VERIFY_MODE == "fix":
+            # Od 1.8.7: problemy, które przetrwały poprawki, są oznaczone W TREŚCI (przy bloku / numerze linii),
+            # a nie tylko w stopce pod odpowiedzią (stopki zostają bez zmian).
+            cut = answer.find("\n\n_[")
+            body, tail = (answer[:cut], answer[cut:]) if cut >= 0 else (answer, "")
+            meta_now, files_now = _session_meta(messages), _session_files(messages)
+            api_now = _api_problems(body, meta_now, files_now) if API_CHECK_MODE == "fix" else []
+            body, marked = _annotate_answer(body, files_now, meta_now,
+                                            _syntax_problems(body) if API_CHECK_MODE == "fix" else [], api_now)
+            if marked:
+                print(f"  [OZNACZENIA] oznaczono w treści odpowiedzi: {marked}", flush=True)
+                answer = body + tail
         if VERIFY_MODE == "footer" and findings:
             answer += _verification_footer(findings)
         elif VERIFY_MODE == "fix":
@@ -1408,7 +1624,8 @@ def _ask_impl(question: str, messages: list[dict], mcp: MCPStdioClient,
                         print(f"  [KB] własny kod bez konsultacji z bazą - wb_knowledge('{kb_query}'): "
                               f"{', '.join(kb_files) or 'brak plików'}; {len(excerpt)} zn. wzorców", flush=True)
                         if excerpt:
-                            kb_hint = HINT_KB_CHECK.format(query=kb_query, files=", ".join(kb_files) or "-", excerpt=excerpt)
+                            kb_hint = HINT_KB_CHECK.format(query=kb_query, files=", ".join(kb_files) or "-", excerpt=excerpt,
+                                                         question=_short_question(question))
                 except Exception as exc:  # kontrola nigdy nie psuje odpowiedzi
                     print(f"  [KB] kontrola wzorców pominięta z powodu błędu: {exc!r}", flush=True)
             quote: list[str] = []
@@ -1475,8 +1692,12 @@ def _ask_impl(question: str, messages: list[dict], mcp: MCPStdioClient,
             phase("Odpowiedź gotowa")
             return (content or "[Model nie zwrócił odpowiedzi tekstowej]") + api_footer
 
-        if failed_rounds >= 4 or tool_rounds > MAX_TOOL_CALLS + 6:
-            stop_cause = ("seria rund bez nowych danych" if failed_rounds >= 4
+        # Od 1.8.8: seria rund bez nowych danych kończy wyszukiwanie dopiero, gdy model wykorzystał już część limitu
+        # (test G: stop po 4 wywołaniach, zanim model trafił na właściwy plik) albo zastój trwa naprawdę długo.
+        stalled = failed_rounds >= STALL_STOP_ROUNDS and (count >= STALL_STOP_MIN_CALLS
+                                                          or failed_rounds >= STALL_STOP_ROUNDS_HARD)
+        if stalled or tool_rounds > MAX_TOOL_CALLS + 6:
+            stop_cause = ("seria rund bez nowych danych" if stalled
                           else "limit rund narzędzi")
             # GPT-OSS bywa skłonny zwrócić tool_calls nawet gdy API nie przekazało
             # narzędzi. Zamiast kończyć pustym błędem: osobna synteza ze źródeł.
@@ -1697,6 +1918,18 @@ def _ask_impl(question: str, messages: list[dict], mcp: MCPStdioClient,
                                                   + (f" [{_view_label(view)}]" if view else ""))
                             else:
                                 searches.append(f"{name}({arguments.get('query', arguments.get('path', ''))})")
+                        gq = re.sub(r"[\s(\"'`]+", "", str(arguments.get("query") or "")) if name in ("api_search", "wiki_search") else ""
+                        if gq in GLOBAL_FUNCTION_FILES and not is_error:
+                            try:
+                                gpath, gdecl, gtext = _global_decl(mcp, gq)
+                            except Exception as exc:  # uzupełnienie nigdy nie psuje tury
+                                print(f"  [GLOBALNA] pominięte z powodu błędu: {exc!r}", flush=True)
+                                gpath = ""
+                            if gpath:
+                                response += NOTE_GLOBAL_DECL.format(name=gq, path=gpath, decl=gdecl)
+                                session_files[_path_key(gpath)] = gtext      # cytat z tego pliku przejdzie weryfikację
+                                _add_evidence(meta, gtext)
+                                successful_tool = True
                         if name == "api_search" and not is_error:
                             try:
                                 parents = _parents_note(mcp, meta, arguments.get("query"), raw)
@@ -1706,6 +1939,15 @@ def _ask_impl(question: str, messages: list[dict], mcp: MCPStdioClient,
                             if parents:
                                 response += parents
                                 successful_tool = True
+                            elif _is_negative_result(response) or response.lstrip().startswith("[BRAK DOKŁADNEGO"):
+                                try:
+                                    miss = _search_miss_file_note(mcp, arguments.get("query"))
+                                except Exception as exc:  # j.w.
+                                    print(f"  [PLIK] sprawdzenie pliku pominięte z powodu błędu: {exc!r}", flush=True)
+                                    miss = ""
+                                if miss:
+                                    response += miss
+                                    successful_tool = True
                         print(f"  -> {'BŁĄD' if is_error else 'ok'} {len(response)} zn.", flush=True)
                         if class_hint and not is_error:
                             method = arguments.get("query", "")
@@ -1730,9 +1972,9 @@ def _ask_impl(question: str, messages: list[dict], mcp: MCPStdioClient,
                 result_msgs[new_signature] = tool_msg
             _compact_tool_context(messages)
         failed_rounds = 0 if successful_tool else failed_rounds + 1
-        if failed_rounds == 2:
+        if failed_rounds == 2 or (failed_rounds >= STALL_STOP_ROUNDS and failed_rounds % 2 == 0):
             # Przełamanie zastoju: rundy bez nowych danych. Jednorazowa podpowiedź (nie trafia do historii).
-            print("  [STALL] 2 rundy bez nowych danych - podpowiedź z rejestrem", flush=True)
+            print(f"  [STALL] {failed_rounds} rundy bez nowych danych - podpowiedź z rejestrem", flush=True)
             pending_hint = {"role": "user", "content": HINT_STALL.format(ledger=_ledger(read_paths, searches, misses))}
         if count >= MAX_TOOL_CALLS:
             # Nie zostawiaj w historii trwałego systemowego zakazu narzędzi!
